@@ -53,9 +53,6 @@ def make_recipe(source,decomp,rs,eyes,mouth,out):
  def rel(b,sw,sh):
   x,y,w,h=b;return [round((x-crop[0])*sw/crop[2]),round((y-crop[1])*sh/crop[3]),round(w*sw/crop[2]),round(h*sh/crop[3])]
  le,re,mo=rel(rs["left_eye"],ew,eh),rel(rs["right_eye"],ew,eh),rel(rs["mouth"],ow,oh)
- def poly(b,sw,sh,e):
-  x,y,w,h=b;x-=e*w;y-=e*h;w*=1+2*e;h*=1+2*e
-  return [[round((x-crop[0])*sw/crop[2]),round((y-crop[1])*sh/crop[3])],[round((x+w-crop[0])*sw/crop[2]),round((y-crop[1])*sh/crop[3])],[round((x+w-crop[0])*sw/crop[2]),round((y+h-crop[1])*sh/crop[3])],[round((x-crop[0])*sw/crop[2]),round((y+h-crop[1])*sh/crop[3])]]
  leaves=[l for l in psd.descendants() if not l.is_group()];names={l.name for l in leaves};body={}
  for n in ("legwear","footwear"):
   if n in names:body[n]=mw//2
@@ -63,10 +60,7 @@ def make_recipe(source,decomp,rs,eyes,mouth,out):
  for n in ("handwear-l","handwear-r"):
   if n in names:
    x,y,R,B=next(l for l in leaves if l.name==n).bbox;hands[n]=[[x,y+round((B-y)*.78)],[R,y+round((B-y)*.72)]]
- face=next((l for l in leaves if l.name=="face"),None);samples=[]
- if face:
-  x,y,R,B=face.bbox;samples=[(round(x+(R-x)*u),round(y+(B-y)*v)) for u,v in ((.25,.7),(.45,.72),(.65,.7),(.35,.85),(.55,.85))]
- recipe={"schema_version":1,"reference_sha256":sha(source),"source_psd_sha256":sha(decomp),"edit_sha256":{"mouth":sha(mouth),"eyes":sha(eyes)},"reference_size":[rw,rh],"model_canvas":[mw,mh],"edit_size":[ew,eh],"edit_crop":list(crop),"closed_eyes":{"eye_close-r":{"rect":[le[0],le[1],le[0]+le[2],le[1]+le[3]],"thresholds":{"dark":100,"light":155}},"eye_close-l":{"rect":[re[0],re[1],re[0]+re[2],re[1]+re[3]],"thresholds":{"dark":100,"light":155}}},"mouth":{"outline":poly(rs["mouth"],ow,oh,.18),"teeth":poly(rs["mouth"],ow,oh,.03),"tongue":poly(rs["mouth"],ow,oh,.10),"cavity_sample":[round(mo[0]+mo[2]*.5),round(mo[1]+mo[3]*.55)],"lip_split_y":round(mo[1]+mo[3]*.33)},"face_repair":{"layer":"face","fade_start_y":round(face.bbox[1]+(face.bbox[3]-face.bbox[1])*.5) if face else 0,"fade_end_y":round(face.bbox[1]+(face.bbox[3]-face.bbox[1])*.8) if face else 1,"sample_points":samples},"body_splits":body,"hand_splits":hands,"manual_targets":{"ParamArmL":["arm-l","hand-l"],"ParamArmR":["arm-r","hand-r"],"ParamSkirtSwing":["bottomwear"],"ParamBodyAngleX":["topwear","bottomwear","neck"],"ParamLegL":["legwear-l","footwear-l"],"ParamLegR":["legwear-r","footwear-r"]}}
+ recipe={"schema_version":1,"reference_sha256":sha(source),"source_psd_sha256":sha(decomp),"edit_sha256":{"mouth":sha(mouth),"eyes":sha(eyes)},"reference_size":[rw,rh],"model_canvas":[mw,mh],"edit_size":[ew,eh],"edit_crop":list(crop),"closed_eyes":{"eye_close-r":{"rect":[le[0],le[1],le[0]+le[2],le[1]+le[3]],"thresholds":{"dark":100,"light":155}},"eye_close-l":{"rect":[re[0],re[1],re[0]+re[2],re[1]+re[3]],"thresholds":{"dark":100,"light":155}}},"body_splits":body,"hand_splits":hands,"manual_targets":{"ParamArmL":["arm-l","hand-l"],"ParamArmR":["arm-r","hand-r"],"ParamSkirtSwing":["bottomwear"],"ParamBodyAngleX":["topwear","bottomwear","neck"],"ParamLegL":["legwear-l","footwear-l"],"ParamLegR":["legwear-r","footwear-r"]}}
  # Detect actual mouth pixels. Coarse rectangles must never become visible skin blocks.
  recipe['mouth']=measure_mouth(mouth,mo)
  for suffix in ('r','l'):
