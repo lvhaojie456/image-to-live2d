@@ -20,12 +20,16 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from openai import OpenAI
+import httpx
+from openai import APIConnectionError, InternalServerError, OpenAI
 from PIL import Image, ImageOps
 
 
 ROOT = Path(__file__).resolve().parent
 OUTPUTS = ROOT / "outputs"
+# The SDK only retries before the response starts; a drop mid-body (peer closed the
+# chunked stream) or a gateway 5xx surfaces here and is worth one fresh request.
+STREAM_RETRY_ERRORS = (httpx.TransportError, APIConnectionError, InternalServerError)
 
 
 def load_env(path: Path = ROOT / ".env") -> None:
@@ -160,20 +164,45 @@ def plan(args) -> None:
         "无法可靠定位时填 null，不要猜超出图像范围的坐标。"
         f"JSON 结构如下：{json.dumps(schema, ensure_ascii=False)}"
     )
+    messages = [
+        {"role": "system", "content": instruction},
+        {"role": "user", "content": [
+            {"type": "text", "text": "请分析此角色图。"},
+            {"type": "image_url", "image_url": {"url": image_data_uri(image)}},
+        ]},
+    ]
+    retries = int(os.getenv("ASTRA_STREAM_RETRIES", "1"))
+    if retries < 0:
+        raise SystemExit("ASTRA_STREAM_RETRIES 不能为负数。")
     print(f"调用 {model} 分析拆层和绑定计划…")
+    for attempt in range(retries + 1):
+        try:
+            text, finish_reason = stream_plan(api, model, messages)
+            break
+        except STREAM_RETRY_ERRORS as error:
+            if attempt == retries:
+                raise
+            delay = 5 * (attempt + 1)
+            print(f"Astra 流式响应中断（{type(error).__name__}），{delay} 秒后重新请求…", flush=True)
+            time.sleep(delay)
+    (workspace / "layer_plan_response.txt").write_text(text, encoding="utf-8")
+    if finish_reason != "stop":
+        raise RuntimeError("Astra stream ended without a complete plan")
+    data = extract_json(text)
+    (workspace / "layer_plan.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_plan_markdown(data, workspace / "layer_plan.md")
+    print(f"已保存：{workspace / 'layer_plan.json'}")
+
+
+def stream_plan(api, model, messages):
+    """Stream one planning response and return its text with the finish reason."""
     result = api.chat.completions.create(
         model=model,
         reasoning_effort=os.getenv('ASTRA_REASONING_EFFORT','low'),
         max_completion_tokens=8000,
         temperature=0.2,
         stream=True,
-        messages=[
-            {"role": "system", "content": instruction},
-            {"role": "user", "content": [
-                {"type": "text", "text": "请分析此角色图。"},
-                {"type": "image_url", "image_url": {"url": image_data_uri(image)}},
-            ]},
-        ],
+        messages=messages,
     )
     chunks=[]
     finish_reason=None
@@ -185,14 +214,7 @@ def plan(args) -> None:
                     chunks.append(choice.delta.content)
                 if choice.finish_reason:
                     finish_reason=choice.finish_reason
-    text = ''.join(chunks)
-    (workspace / "layer_plan_response.txt").write_text(text, encoding="utf-8")
-    if finish_reason != "stop":
-        raise RuntimeError("Astra stream ended without a complete plan")
-    data = extract_json(text)
-    (workspace / "layer_plan.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    write_plan_markdown(data, workspace / "layer_plan.md")
-    print(f"已保存：{workspace / 'layer_plan.json'}")
+    return ''.join(chunks), finish_reason
 
 
 def write_plan_markdown(data, path: Path) -> None:

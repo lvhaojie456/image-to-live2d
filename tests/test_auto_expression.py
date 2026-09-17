@@ -23,6 +23,7 @@ class AutoExpressionTests(unittest.TestCase):
             draw.ellipse((70,98,109,111),fill=(190,105,100))
             image.save(path)
             spec=measure_mouth(path,[50,65,80,60])
+            self.assertEqual(spec['dark_threshold'],145)
             mask=polygon_mask(image.size,spec['outline'])
             self.assertEqual(mask.getpixel((50,65)),0)
             self.assertEqual(mask.getpixel((90,90)),255)
@@ -31,6 +32,35 @@ class AutoExpressionTests(unittest.TestCase):
             tongue=polygon_mask(image.size,spec['tongue'])
             self.assertGreater(teeth.getpixel((90,82)),240)
             self.assertGreater(tongue.getpixel((90,105)),240)
+
+    def test_mouth_falls_back_to_a_darker_threshold_when_shadow_spans_the_search_box(self):
+        # Realistic renders: beard shadow (gray 130) fills the whole search box below the
+        # lenient 145 cut-off, so only the darker cut-off isolates the cavity.
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'mouth.png'
+            image=Image.new('RGB',(180,180),(237,206,181))
+            draw=ImageDraw.Draw(image)
+            draw.rectangle((10,25,170,165),fill=(130,130,130))
+            draw.ellipse((55,75,125,115),fill=(45,20,20))
+            draw.rectangle((69,79,112,85),fill=(235,230,218))
+            draw.ellipse((70,98,109,111),fill=(190,105,100))
+            image.save(path)
+            spec=measure_mouth(path,[50,65,80,60])
+            self.assertEqual(spec['dark_threshold'],120)
+            mask=polygon_mask(image.size,spec['outline'])
+            self.assertEqual(mask.getpixel((30,40)),0)
+            self.assertEqual(mask.getpixel((90,90)),255)
+            self.assertGreater(polygon_mask(image.size,spec['teeth']).getpixel((90,82)),240)
+            self.assertGreater(polygon_mask(image.size,spec['tongue']).getpixel((90,105)),240)
+
+    def test_mouth_reports_the_boundary_when_no_threshold_isolates_a_cavity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'mouth.png'
+            image=Image.new('RGB',(180,180),(237,206,181))
+            ImageDraw.Draw(image).rectangle((10,25,170,165),fill=(20,10,10))
+            image.save(path)
+            with self.assertRaisesRegex(ValueError,'search boundary'):
+                measure_mouth(path,[50,65,80,60])
 
     def test_textured_face_and_neutral_mouth_preserve_source_pixels(self):
         pixels=np.random.default_rng(3).integers(30,230,(40,40,4),dtype='uint8')

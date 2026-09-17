@@ -33,7 +33,7 @@ CUBISM_CORE_DIR=/Applications/Live2D Cubism 5.3/res
 
 制作端仅向安忆 API 发起出站连接；无需在 Mac 或 4090 开放公网 HTTP 端口。供应商密钥仅存在于制作主机环境中；安忆客户端不接触制作端密钥。工作目录默认 `work/anyi-jobs/`，包含用户图片和诊断输出，目录权限为 700，应按运维保留期清理和备份，禁止公开托管。
 
-常驻部署可用 `ANYI_WORKER_ENV_FILE` 指向代码目录之外的 600 权限环境文件。生产 Mac 使用 launchd 管理进程；需要 Mac 在线且不休眠。Astra 规划采用流式响应、默认 low 推理强度，可通过 `ASTRA_REASONING_EFFORT` 调整。
+常驻部署可用 `ANYI_WORKER_ENV_FILE` 指向代码目录之外的 600 权限环境文件。生产 Mac 使用 launchd 管理进程；需要 Mac 在线且不休眠。Astra 规划采用流式响应、默认 low 推理强度，可通过 `ASTRA_REASONING_EFFORT` 调整；流在传输层被对端中断或网关返回 5xx 时按 `ASTRA_STREAM_RETRIES`（默认 1 次）重新发起同一请求。
 
 ## 任务协议
 

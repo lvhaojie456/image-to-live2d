@@ -29,6 +29,36 @@ def largest_near(mask, center):
     return ids == best
 
 
+# Darkness cut-offs tried in order for the mouth cavity. Illustrations pass at the
+# first one; realistic renders put beard shadow and skin creases below it, which
+# fuses them with the cavity until the blob spans the search box.
+MOUTH_DARK_THRESHOLDS = (145, 120, 100)
+
+
+def mouth_aperture(gray, region, center, threshold, limits):
+    """Fill the largest dark blob near the mouth centre at one darkness threshold.
+
+    Returns None when the blob is degenerate or spans the search box, so the
+    caller can retry with a darker cut-off.
+    """
+    dark = (gray<threshold)&region
+    dark = cv2.morphologyEx(dark.astype('uint8'),cv2.MORPH_CLOSE,np.ones((3,3),'uint8'))
+    aperture = largest_near(dark,center)
+    # The dark rim can contain gaps where teeth and tongue meet a lip. Fill its
+    # convex outline so those bright details remain inside the extracted mouth.
+    coords = cv2.findNonZero(aperture.astype('uint8'))
+    hull = cv2.convexHull(coords)
+    aperture = np.zeros_like(dark,dtype='uint8')
+    cv2.fillConvexPoly(aperture,hull,1)
+    aperture = binary_fill_holes(aperture)
+    # One pixel of the lip edge keeps the color transition without including skin corners.
+    aperture = cv2.dilate(aperture.astype('uint8'),np.ones((3,3),'uint8'))>0
+    _,_,aw,ah = cv2.boundingRect(aperture.astype('uint8'))
+    if aw < 5 or ah < 5 or aw > limits[0]*.98 or ah > limits[1]*.98:
+        return None
+    return aperture
+
+
 def measure_mouth(path, rectangle):
     """Find the dark aperture, enclosed teeth and the lower red tongue."""
     with Image.open(path) as image:
@@ -40,22 +70,14 @@ def measure_mouth(path, rectangle):
     region = np.zeros((height,width),dtype=bool)
     region[y1:y2,x1:x2] = True
     gray = cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY)
-    dark = (gray<145)&region
-    dark = cv2.morphologyEx(dark.astype('uint8'),cv2.MORPH_CLOSE,np.ones((3,3),'uint8'))
-    aperture = largest_near(dark,(x+w/2,y+h/2))
-    # The dark rim can contain gaps where teeth and tongue meet a lip. Fill its
-    # convex outline so those bright details remain inside the extracted mouth.
-    coords = cv2.findNonZero(aperture.astype('uint8'))
-    hull = cv2.convexHull(coords)
-    aperture = np.zeros_like(dark,dtype='uint8')
-    cv2.fillConvexPoly(aperture,hull,1)
-    aperture = binary_fill_holes(aperture)
-    # One pixel of the lip edge keeps the color transition without including skin corners.
-    aperture = cv2.dilate(aperture.astype('uint8'),np.ones((3,3),'uint8'))>0
+    for threshold in MOUTH_DARK_THRESHOLDS:
+        aperture = mouth_aperture(gray,region,(x+w/2,y+h/2),threshold,(x2-x1,y2-y1))
+        if aperture is not None:
+            break
+    else:
+        raise ValueError('Mouth measurement hit the search boundary; remeasure face regions')
     yy,xx = np.indices(aperture.shape)
     ax,ay,aw,ah = cv2.boundingRect(aperture.astype('uint8'))
-    if aw < 5 or ah < 5 or aw > (x2-x1)*.98 or ah > (y2-y1)*.98:
-        raise ValueError('Mouth measurement hit the search boundary; remeasure face regions')
     teeth = aperture & (gray>155) & (yy<ay+ah*.48)
     tongue = aperture & (yy>ay+ah*.45) & (gray>65) & (
         rgb[...,0].astype(float)>rgb[...,1]*1.30)
@@ -67,7 +89,8 @@ def measure_mouth(path, rectangle):
     return {'outline':contour(aperture,'mouth'),
             'teeth':contour(teeth,'teeth'),'tongue':contour(tongue,'tongue'),
             'cavity_sample':[int(sx),int(sy)],'lip_split_y':round(ay+ah*.35),
-            'measurement':'connected aperture and color components in the actual AI edit'}
+            'measurement':'connected aperture and color components in the actual AI edit',
+            'dark_threshold':threshold}
 
 
 def eye_patch_rect(layer_box, reference_size, crop, edit_size, canvas):
