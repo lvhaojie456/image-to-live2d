@@ -12,7 +12,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from live2d_pipeline import unpack_result
-from scripts.auto_build import motion_recipe
+from scripts.auto_build import motion_recipe, verification_failure
 
 
 class PipelineTests(unittest.TestCase):
@@ -41,6 +41,34 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(coat_recipe['skirt']['target_layers'],['topwear'])
             self.assertEqual(coat_recipe['skirt']['hem_y'],450)
             self.assertLess(coat_recipe['body']['lean_pin_y'],950)
+
+    def test_motion_scale_shrinks_every_amplitude_and_verification_failures_are_classified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            manifest = {'width': 1000, 'height': 1000, 'layers': [
+                {'name': 'topwear', 'bbox': [400, 180, 600, 450]}, {'name': 'legwear-l', 'bbox': [520, 560, 650, 950]},
+                {'name': 'legwear-r', 'bbox': [350, 560, 480, 950]}, {'name': 'arm-l', 'bbox': [600, 220, 730, 500]},
+                {'name': 'arm-r', 'bbox': [270, 220, 400, 500]}]}
+            (package / 'authoring-manifest.json').write_text(json.dumps(manifest))
+            full, small = motion_recipe(package), motion_recipe(package, 0.33)
+            self.assertEqual(full['motion_scale'], 1.0); self.assertEqual(small['motion_scale'], 0.33)
+            self.assertAlmostEqual(small['body']['lean_degrees'], 0.99); self.assertAlmostEqual(small['body']['breath_lift_px'], 1.32)
+            self.assertAlmostEqual(small['arms']['l']['degrees'], 0.99); self.assertAlmostEqual(small['skirt']['sway_px'], 1.32)
+            self.assertEqual(small['body']['pivot'], full['body']['pivot']); self.assertEqual(small['body']['lean_pin_y'], full['body']['lean_pin_y'])
+            with self.assertRaises(ValueError):
+                motion_recipe(package, 0.05)
+            motion = package / 'body-motion'; (motion / 'verification').mkdir(parents=True)
+            self.assertIsNone(verification_failure(motion))
+            poses = [{'finite': True, 'trianglesFlippedFromNeutral': 0, 'degenerateTriangles': 0}] * 3
+            (motion / 'verification/sequence-checks.json').write_text(json.dumps({'passed': False, 'feetMaxDisplacementPixels': 0.32, 'poses': poses}))
+            found = verification_failure(motion)
+            self.assertTrue(found['tunable']); self.assertEqual(found['poseCount'], 3)
+            poses[1] = {'finite': True, 'trianglesFlippedFromNeutral': 0, 'degenerateTriangles': 4}
+            (motion / 'verification/sequence-checks.json').write_text(json.dumps({'passed': False, 'feetMaxDisplacementPixels': 0.32, 'poses': poses}))
+            self.assertFalse(verification_failure(motion)['tunable'])
+            (motion / 'verification/sequence-checks.json').write_text(json.dumps({'passed': False, 'feetMaxDisplacementPixels': 0.0,
+                'poses': [{'finite': True, 'trianglesFlippedFromNeutral': 2, 'degenerateTriangles': 0}]}))
+            self.assertTrue(verification_failure(motion)['tunable'])
 
     def test_artifact_integrity_and_zip_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:

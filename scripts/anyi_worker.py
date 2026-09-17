@@ -117,9 +117,13 @@ def collect_delivery(workspace,destination):
     (runtime/'model.model3.json').write_text(json.dumps(manifest,indent=2))
     shutil.copy2(workspace/'cubism-ready/neutral.png',destination/'preview.png')
     shutil.copy2(motion/'verification/body-idle.gif',destination/'preview.gif')
+    stages=build.get('stages') or {}
     validation={'corePassed':True,'motionPassed':True,'psdPassed':True,'refinementRequired':True,
                 'editorCompatibility':'unverified','poseCount':poses['poseCount'],
-                'feetMaxDisplacementPixels':poses['feetMaxDisplacementPixels']}
+                'feetMaxDisplacementPixels':poses['feetMaxDisplacementPixels'],
+                'motionScale':(stages.get('body_motion') or {}).get('motion_scale',1.0),
+                'backgroundClipped':sorted((stages.get('foreground') or {}).get('leaking') or []),
+                'visualReview':stages.get('visual_review')}
     (destination/'validation.json').write_text(json.dumps(validation,indent=2))
     with zipfile.ZipFile(destination/'project.zip','w',zipfile.ZIP_DEFLATED,compresslevel=4) as archive:
         for folder in [workspace/'cubism-ready',model]:
@@ -130,12 +134,31 @@ def collect_delivery(workspace,destination):
     return {str(p.relative_to(destination)):p for p in sorted(destination.rglob('*')) if p.is_file()}
 
 
+DIAGNOSIS_CODES={'provider_unavailable','background_leak','face_not_located','expression_failed','rig_unstable','budget_exhausted'}
+SUGGESTIONS={'retry','regenerate_image','new_input'}
+RETRY_HINTS={'regenerate_image'}
+
+
+def read_diagnosis(attempt):
+    """Whitelisted diagnosis written by the build's supervisor, or {} when absent/invalid."""
+    path=attempt/'supervisor/diagnosis.json'
+    try: data=json.loads(path.read_text())
+    except (OSError,ValueError): return {}
+    code=data.get('diagnosisCode');suggestion=data.get('suggestion');summary=data.get('summary')
+    if code not in DIAGNOSIS_CODES: return {}
+    payload={'diagnosisCode':code}
+    if suggestion in SUGGESTIONS: payload['suggestion']=suggestion
+    if isinstance(summary,str) and summary.strip(): payload['summary']=''.join(ch for ch in summary if ch>=' ')[:200]
+    return payload
+
+
 def process(api,job,workdir,python):
     uuid.UUID(job['id'])
     root=workdir/job['id']
     root.mkdir(parents=True,exist_ok=True)
     root.chmod(0o700)
     attempt=root/('attempt-'+uuid.uuid4().hex[:12])
+    hint=job.get('retryHint') if job.get('retryHint') in RETRY_HINTS else None
     progress_path=root/'progress.json'
     progress={'stage':'preparing','progress':1}
     progress_path.write_text(json.dumps(progress))
@@ -164,11 +187,14 @@ def process(api,job,workdir,python):
             if len(data)>8*1024*1024: raise ValueError('Input too large')
             source.write_bytes(data)
         previous=[]
-        for old in root.glob('attempt-*'):
+        # A regenerate_image hint discards every checkpoint of the old picture (the user paid for a new one).
+        for old in sorted(root.glob('attempt-*'),key=lambda p:p.stat().st_mtime):
+            if hint=='regenerate_image': break
             generated=old/'01_generated.png'
             if source is None and generated.is_file(): source=generated
             if (old/'01_input_white.png').exists(): previous.append(old)
-        command=[str(python),'-u',str(ROOT/'live2d_pipeline.py'),'build','--output',str(attempt)]
+        command=[str(python),'-u',str(ROOT/'live2d_pipeline.py'),'build','--output',str(attempt),
+                 '--supervisor-state',str(root/'supervisor-state.json')]
         command += ['--image',str(source)] if source else ['--prompt',job['prompt']]
         # Checkpoints belong to this immutable server job and never to another user.
         if previous:
@@ -203,7 +229,7 @@ def process(api,job,workdir,python):
                 os.killpg(child.pid,signal.SIGKILL)
                 child.wait()
         if not lost.is_set():
-            try: api.call(f'/internal/live2d/jobs/{job["id"]}/fail',{},job['leaseToken'])
+            try: api.call(f'/internal/live2d/jobs/{job["id"]}/fail',read_diagnosis(attempt),job['leaseToken'])
             except Exception: pass
         print('Live2D job failed: '+job['id']+'; inspect the private worker directory',flush=True)
         raise

@@ -456,6 +456,8 @@ def main() -> None:
     p.add_argument('--reuse-decomposition')
     p.add_argument('--reuse-plan', help='复用同一输入图的 layer_plan.json，跳过 Astra 请求')
     p.add_argument('--reuse-expressions', help='复用同一输入图目录中的 expression_eyes.png 和 expression_mouth.png')
+    p.add_argument('--background', choices=['transparent', 'opaque'], help='提示词生成时的背景，默认读 IMAGE_BACKGROUND（transparent）')
+    p.add_argument('--supervisor-state', help='跨尝试共享的监督预算文件（制作端按任务传入）')
     p.set_defaults(func=lambda args: __import__('scripts.auto_build', fromlist=['run']).run(args))
     args = parser.parse_args()
     load_env()
