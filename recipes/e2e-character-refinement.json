@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "reference_sha256": "7314e98cfbdc41e64810f5d7bcc9f0ed1e619cba9204d53df1e2a76217704376",
+  "source_psd_sha256": "de720ebc9e7f8dcce7697b879e8b75dee6f8e39b0ca82dcbb7aad16915b768e7",
+  "edit_sha256": {
+    "mouth": "fe967a74f7c028c3d543b660a595ae13ad39560261e699bce37888882838c0bc",
+    "eyes": "2befb291fddffdae75d76e27e950af62e5fd514a51a95e0eeb8ebe6ab7d4fccb"
+  },
+  "reference_size": [1024,1536],
+  "model_canvas": [1280,1280],
+  "edit_size": [1254,1254],
+  "edit_crop": [320,0,384,384],
+  "closed_eyes": {
+    "eye_close-r": {"rect": [400,573,541,617], "thresholds": {"dark": 110, "light": 155}},
+    "eye_close-l": {"rect": [640,550,804,599], "thresholds": {"dark": 110, "light": 155}}
+  },
+  "mouth": {
+    "outline": [[565,720],[568,714],[580,708],[596,704],[620,702],[639,700],[653,705],[658,713],[656,730],[650,743],[638,754],[620,762],[605,762],[588,753],[576,741],[569,728]],
+    "teeth": [[580,709],[596,705],[620,703],[638,702],[642,706],[629,710],[605,713],[587,712]],
+    "tongue": [[575,732],[585,723],[600,719],[620,717],[638,722],[650,733],[643,747],[631,755],[615,760],[599,756],[585,748]],
+    "cavity_sample": [575,723],
+    "lip_split_y": 720
+  },
+  "face_repair": {
+    "layer": "face", "fade_start_y": 153, "fade_end_y": 179,
+    "sample_points": [[595,172],[617,167],[642,170],[661,171],[610,183],[650,183]],
+    "note": "Measured skin underpainting replaces residual bangs and eye shadows; retains the face silhouette."
+  },
+  "body_splits": {"legwear": 639, "footwear": 639},
+  "hand_splits": {"handwear-r": [[425,589],[480,609]], "handwear-l": [[804,609],[857,590]]},
+  "manual_targets": {
+    "ParamArmL": ["arm-l","hand-l"], "ParamArmR": ["arm-r","hand-r"],
+    "ParamSkirtSwing": ["bottomwear"], "ParamBodyAngleX": ["topwear","bottomwear","neck"],
+    "ParamLegL": ["legwear-l","footwear-l"], "ParamLegR": ["legwear-r","footwear-r"]
+  }
+}

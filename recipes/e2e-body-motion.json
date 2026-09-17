@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "model_canvas": [1280,1280],
+  "body": {
+    "pivot": [639,555],
+    "lean_degrees": 3.0,
+    "lean_full_y": 460,
+    "lean_pin_y": 860,
+    "breath_lift_px": 4.0,
+    "chest_expansion": 0.009,
+    "chest_y": 320,
+    "chest_radius": 100,
+    "shoulder_y": 250,
+    "breath_pin_y": 475
+  },
+  "arms": {
+    "l": {"pivot":[720,268],"pin_y":272,"free_y":370,"degrees":3.2},
+    "r": {"pivot":[560,268],"pin_y":272,"free_y":370,"degrees":3.2}
+  },
+  "skirt": {"pin_y":465,"hem_y":648,"sway_px":10,"hem_lift_px":2,"half_width":150},
+  "loop_seconds": 8,
+  "fps": 30,
+  "note": "Measured for the pink character's 1280 square decomposition. Arms and hands share a warp; shoulder and waistband nodes stay fixed."
+}
