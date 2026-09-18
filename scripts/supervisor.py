@@ -38,7 +38,7 @@ MESSAGES = {'provider_unavailable': '生成服务暂时不可用，请稍后重�
             'expression_failed': '表情素材生成不合格，请重试。',
             'rig_unstable': '动作检查未通过，建议换一张四肢完整、背景干净的图片。',
             'budget_exhausted': '自动修复次数已用完，请换一张图片或修改描述后重新提交。'}
-THUMBNAIL = 512
+THUMBNAIL = 384
 SUMMARY_LIMIT = 200
 
 
@@ -128,7 +128,7 @@ class Supervisor:
                 self._api = self.client_factory()
             else:
                 from live2d_pipeline import client
-                self._api = client().with_options(timeout=60.0, max_retries=0)
+                self._api = client().with_options(timeout=float(os.environ.get('SUPERVISOR_TIMEOUT_SECONDS', '90')), max_retries=0)
         return self._api
 
     def ask(self, name, system, text, images, max_tokens=600):
@@ -150,25 +150,35 @@ class Supervisor:
             content.append({'type': 'text', 'text': f'[{label}]'})
             content.append({'type': 'image_url', 'image_url': {'url': uri}})
         started = time.time()
-        try:
-            response = self._client().chat.completions.create(
+        attempts = 2
+        for attempt in range(attempts):
+            try:
+                answer = self._request(system, content, max_tokens)
+                record['seconds'] = round(time.time() - started, 1)
+                record['answer'] = answer
+                record.pop('error', None); record.pop('attempts', None)
+                self._log(name + '.json', record)
+                return answer
+            except Exception as error:  # provider, transport, JSON: retry once, then degrade
+                record['seconds'] = round(time.time() - started, 1)
+                record['error'] = type(error).__name__
+                record['attempts'] = attempt + 1
+                if attempt + 1 < attempts:
+                    time.sleep(5)
+        self._log(name + '.json', record)
+        return None
+
+    def _request(self, system, content, max_tokens):
+        """One non-streaming JSON request; raises on provider, transport or JSON errors."""
+        response = self._client().chat.completions.create(
                 model=self.model, reasoning_effort=os.environ.get('SUPERVISOR_REASONING_EFFORT', 'low'),
                 max_completion_tokens=max_tokens, temperature=0, response_format={'type': 'json_object'},
                 messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': content}])
-            raw = response.choices[0].message.content or ''
-            record['seconds'] = round(time.time() - started, 1)
-            record['raw'] = raw[:4000]
-            answer = json.loads(raw)
-            if not isinstance(answer, dict):
-                raise ValueError('answer is not an object')
-            record['answer'] = answer
-            self._log(name + '.json', record)
-            return answer
-        except Exception as error:  # provider, transport, JSON: all degrade to "no answer"
-            record['seconds'] = round(time.time() - started, 1)
-            record['error'] = type(error).__name__
-            self._log(name + '.json', record)
-            return None
+        raw = response.choices[0].message.content or ''
+        answer = json.loads(raw)
+        if not isinstance(answer, dict):
+            raise ValueError('answer is not an object')
+        return answer
 
     # ----- gates ----------------------------------------------------------
     def review_regions(self, image, regions):

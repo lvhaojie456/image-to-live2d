@@ -12,7 +12,50 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from live2d_pipeline import unpack_result
-from scripts.auto_build import motion_recipe, verification_failure
+from scripts.auto_build import make_recipe, motion_recipe, verification_failure
+
+
+def make_recipe_from_manifest(package):
+    """Run make_recipe against a synthetic decomposition PSD and manifest."""
+    from PIL import Image, ImageDraw
+    from psd_tools import PSDImage
+    from psd_tools.api.layers import PixelLayer
+    import numpy as np
+    manifest = json.loads((package / 'authoring-manifest.json').read_text())
+    size = manifest['width']
+    psd = PSDImage.new('RGBA', (size, size), depth=8)
+    for layer in manifest['layers']:
+        x1, y1, x2, y2 = layer['bbox']
+        pixels = np.zeros((size, size, 4), 'uint8')
+        pixels[y1:y2, x1:x2] = (120, 90, 80, 255)
+        image = Image.fromarray(pixels).crop(layer['bbox'])
+        PixelLayer.frompil(image, parent=psd, name=layer['name'], left=x1, top=y1)
+    psd.save(package / 'input.psd')
+    reference = Image.new('RGB', (1024, 1536), 'white')
+    ImageDraw.Draw(reference).rectangle((330, 40, 700, 560), fill=(230, 200, 180))
+    reference.save(package / '01_input_white.png')
+    from scripts.auto_build import face_crop
+    eyes = Image.new('RGBA', (256, 384), (0, 0, 0, 0)); eyes.save(package / 'eyes.png')
+    # Editor image: a dark cavity with teeth and tongue inside. The mouth box is generous so the
+    # edit-space search box stays wider than the dilated aperture (otherwise the measurement
+    # legitimately reports the search boundary).
+    regions = {'face': [380, 60, 280, 480], 'left_eye': [520, 250, 44, 26], 'right_eye': [470, 250, 44, 26],
+               'mouth': [430, 425, 200, 105]}
+    _, crop_box = face_crop(Image.new('RGB', (1024, 1536), 'white'), regions['face'])
+    x, y, w, h = regions['mouth']
+    rect = [round((x - crop_box[0]) * 256 / crop_box[2]), round((y - crop_box[1]) * 384 / crop_box[3]),
+            round(w * 256 / crop_box[2]), round(h * 384 / crop_box[3])]
+    cx, cy = rect[0] + rect[2] / 2, rect[1] + rect[3] / 2
+    # Skin-toned base: a transparent edit would read as dark everywhere and legitimately fail.
+    mouth = Image.new('RGBA', (256, 384), (237, 206, 181, 255))
+    draw = ImageDraw.Draw(mouth)
+    draw.ellipse((cx - rect[2] * .22, cy - rect[3] * .30, cx + rect[2] * .22, cy + rect[3] * .30), fill=(45, 20, 20, 255))
+    draw.rectangle((cx - rect[2] * .12, cy - rect[3] * .18, cx + rect[2] * .12, cy - rect[3] * .05), fill=(235, 230, 218, 255))
+    draw.ellipse((cx - rect[2] * .13, cy + rect[3] * .08, cx + rect[2] * .13, cy + rect[3] * .26), fill=(190, 105, 100, 255))
+    mouth.save(package / 'mouth.png')
+    recipe_path = make_recipe(package / '01_input_white.png', package / 'input.psd', regions,
+                              package / 'eyes.png', package / 'mouth.png', package)
+    return json.loads(recipe_path.read_text())
 
 
 class PipelineTests(unittest.TestCase):
@@ -69,6 +112,29 @@ class PipelineTests(unittest.TestCase):
             (motion / 'verification/sequence-checks.json').write_text(json.dumps({'passed': False, 'feetMaxDisplacementPixels': 0.0,
                 'poses': [{'finite': True, 'trianglesFlippedFromNeutral': 2, 'degenerateTriangles': 0}]}))
             self.assertTrue(verification_failure(motion)['tunable'])
+
+    def test_unified_handwear_layer_is_split_into_arms_and_hands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp)
+            manifest = {'width': 1000, 'height': 1000, 'layers': [
+                {'name': 'topwear', 'bbox': [400, 180, 600, 450]}, {'name': 'legwear-l', 'bbox': [520, 560, 650, 950]},
+                {'name': 'legwear-r', 'bbox': [350, 560, 480, 950]},
+                {'name': 'handwear', 'bbox': [300, 250, 700, 600]}]}
+            (package / 'authoring-manifest.json').write_text(json.dumps(manifest))
+            recipe = make_recipe_from_manifest(package)
+            self.assertEqual(recipe['body_splits']['handwear'], 500)
+            self.assertEqual(recipe['hand_splits']['handwear-l'][0][0], 500)
+            self.assertEqual(recipe['hand_splits']['handwear-r'][1][0], 500)
+            self.assertEqual(recipe['hand_splits']['handwear-l'][0][1], 250 + round(350 * .78))
+            self.assertEqual(recipe['hand_splits']['handwear-l'][1][1], 250 + round(350 * .72))
+            # Separate per-side layers keep the old per-layer cuff, untouched.
+            manifest['layers'] = [l for l in manifest['layers'] if l['name'] != 'handwear'] + [
+                {'name': 'handwear-l', 'bbox': [520, 250, 700, 600]}, {'name': 'handwear-r', 'bbox': [300, 250, 480, 600]}]
+            (package / 'authoring-manifest.json').write_text(json.dumps(manifest))
+            split = make_recipe_from_manifest(package)
+            self.assertNotIn('handwear', split['body_splits'])
+            self.assertEqual(split['hand_splits']['handwear-l'][0][0], 520)
+            self.assertEqual(split['hand_splits']['handwear-r'][1][0], 480)
 
     def test_artifact_integrity_and_zip_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:

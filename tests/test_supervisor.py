@@ -47,7 +47,7 @@ class SupervisorTests(unittest.TestCase):
         image = Image.new('RGB', (1024, 1536), 'white')
         gate = sup.review_regions(self.save(image), {'face': [400, 100, 200, 200], 'left_eye': [500, 150, 40, 20], 'right_eye': [430, 150, 40, 20], 'mouth': [470, 250, 60, 30]})
         self.assertFalse(gate['ok'])
-        self.assertEqual(gate['regions'], {'mouth': [300, 900, 180, 90]})  # thumbnail is 341x512, scale 3
+        self.assertEqual(gate['regions'], {'mouth': [400, 1200, 240, 120]})  # thumbnail is 256x384, scale 4
         call = self.client.calls[0]
         self.assertFalse(call.get('stream', False)); self.assertEqual(call['temperature'], 0)
         self.assertEqual(call['response_format'], {'type': 'json_object'})
@@ -87,10 +87,23 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(payload['diagnosisCode'], 'provider_unavailable'); self.assertEqual(payload['summary'], MESSAGES['provider_unavailable'])
         self.assertEqual(json.loads((sup.workspace / 'supervisor/diagnosis.json').read_text())['diagnosisCode'], 'provider_unavailable')
 
+    def test_a_transport_error_is_retried_once_before_degrading(self):
+        import httpx
+        sup = self.make([httpx.ReadTimeout('slow'), json.dumps({'score': 0.7, 'issues': []})])
+        review = sup.visual_review([('sheet', Image.new('RGB', (32, 32)))])
+        self.assertEqual(review['score'], 0.7)
+        self.assertEqual(len(self.client.calls), 2)
+        log = json.loads((sup.workspace / 'supervisor/visual-review.json').read_text())
+        self.assertNotIn('error', log)
+        sup2 = self.make(['not json', 'not json'])
+        self.assertIsNone(sup2.visual_review([('sheet', Image.new('RGB', (32, 32)))]))
+        log2 = json.loads((sup2.workspace / 'supervisor/visual-review.json').read_text())
+        self.assertEqual(log2['attempts'], 2); self.assertEqual(log2['error'], 'JSONDecodeError')
+
     def test_mouth_locator_and_helpers(self):
         sup = self.make([json.dumps({'mouth': [100, 200, 60, 30]}), json.dumps({'mouth': None})])
         crop = Image.new('RGB', (1024, 1024), 'white')
-        self.assertEqual(sup.locate_mouth(crop), [200, 400, 120, 60])
+        self.assertEqual(sup.locate_mouth(crop), [267, 533, 160, 80])  # thumbnail 384, scale 1024/384
         self.assertIsNone(sup.locate_mouth(crop))
         self.assertIsNone(rectangle([1, 2, 3], 10, 10)); self.assertIsNone(rectangle([0, 0, 11, 1], 10, 10)); self.assertEqual(rectangle(['1', 2, 3, 4], 10, 10), [1, 2, 3, 4])
         self.assertEqual(sanitize_text('a\x00b\n c ', 3), 'ab')

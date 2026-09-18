@@ -58,9 +58,19 @@ def make_recipe(source,decomp,rs,eyes,mouth,out):
  for n in ("legwear","footwear"):
   if n in names:body[n]=mw//2
  hands={}
+ # Separate per-side layers split at their own cuff.
  for n in ("handwear-l","handwear-r"):
   if n in names:
    x,y,R,B=next(l for l in leaves if l.name==n).bbox;hands[n]=[[x,y+round((B-y)*.78)],[R,y+round((B-y)*.72)]]
+ # A single handwear layer (clasped or hidden hands) is split down the canvas midline first,
+ # then each half at the same cuff ratio, so arms and hands still become separate layers.
+ unified=next((l for l in leaves if l.name=='handwear'),None)
+ if unified is not None and 'handwear-l' not in names and 'handwear-r' not in names:
+  body['handwear']=mw//2
+  x,y,R,B=unified.bbox
+  cuff=y+round((B-y)*.78);free=y+round((B-y)*.72)
+  hands['handwear-l']=[[mw//2,y+round((B-y)*.78)],[R,free]]
+  hands['handwear-r']=[[x,cuff],[mw//2,free]]
  recipe={"schema_version":1,"reference_sha256":sha(source),"source_psd_sha256":sha(decomp),"edit_sha256":{"mouth":sha(mouth),"eyes":sha(eyes)},"reference_size":[rw,rh],"model_canvas":[mw,mh],"edit_size":[ew,eh],"edit_crop":list(crop),"closed_eyes":{"eye_close-r":{"rect":[le[0],le[1],le[0]+le[2],le[1]+le[3]],"thresholds":{"dark":100,"light":155}},"eye_close-l":{"rect":[re[0],re[1],re[0]+re[2],re[1]+re[3]],"thresholds":{"dark":100,"light":155}}},"body_splits":body,"hand_splits":hands,"manual_targets":{"ParamArmL":["arm-l","hand-l"],"ParamArmR":["arm-r","hand-r"],"ParamSkirtSwing":["bottomwear"],"ParamBodyAngleX":["topwear","bottomwear","neck"],"ParamLegL":["legwear-l","footwear-l"],"ParamLegR":["legwear-r","footwear-r"]}}
  # Detect actual mouth pixels. Coarse rectangles must never become visible skin blocks.
  recipe['mouth']=measure_mouth(mouth,mo)
