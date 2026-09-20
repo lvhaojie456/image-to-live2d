@@ -7,7 +7,7 @@ from psd_tools import PSDImage
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 sys.path.insert(0,str(ROOT))
-from live2d_pipeline import client,load_env,new_workspace,plan,prepare_input,remote_decompose,save_image_response
+from live2d_pipeline import client,image_model,load_env,new_workspace,plan,prepare_input,remote_decompose,save_image_response
 from build_refinement_package import build as build_refinement
 from face_assets import build_face_assets
 from body_motion import build_body_motion
@@ -175,7 +175,7 @@ def run(args):
  try:
   if args.prompt:
    stage('generating',5)
-   model=os.environ.get("IMAGE_MODEL","gpt-image-2.5-sunburst")
+   model=image_model()
    prompt=args.prompt+"\n正面完整角色立绘，干净背景，四肢不裁切，适合 Live2D 拆层。"
    background=getattr(args,'background',None) or os.environ.get('IMAGE_BACKGROUND','transparent')
    source=workspace/"01_generated.png"
@@ -207,7 +207,7 @@ def run(args):
   if args.reuse_plan:
    plan_source=Path(args.reuse_plan).expanduser().resolve()
    if not plan_source.is_file():
-    raise FileNotFoundError(f"找不到复用的 Astra 计划：{plan_source}")
+    raise FileNotFoundError(f"找不到复用的规划文件：{plan_source}")
    shutil.copy2(plan_source,workspace/"layer_plan.json")
    stages["astra_plan"]=dict(file="layer_plan.json",reused=True,source=str(plan_source))
   else:
@@ -268,7 +268,7 @@ def run(args):
   expr=workspace/"expressions"
   expr.mkdir()
   stage('expressions',55)
-  model=os.environ.get("IMAGE_MODEL","gpt-image-2.5-sunburst")
+  model=image_model()
   if args.reuse_expressions:
    expression_dir=Path(args.reuse_expressions).expanduser().resolve()
    eyes_source=expression_dir/"expression_eyes.png"
@@ -381,7 +381,7 @@ def handle_failure(supervisor,stage_name,error,workspace,stages):
   elif action in ('retry_stage','replan_with_hint','tune_motion','clip_background','redo_expressions'): suggestion='retry'
   elif action=='give_up': suggestion=None
   if action=='replan_with_hint' and supervisor.mode=='act' and supervisor.consume('replan_with_hint','next retry replans'):
-   # Drop this attempt's plan checkpoint so the worker's next retry calls Astra again.
+   # Drop this attempt's plan checkpoint so the worker's next retry calls the planner again.
    (workspace/'layer_plan.json').unlink(missing_ok=True)
  supervisor.write_diagnosis(code,suggestion,summary,action,packet)
 
@@ -398,7 +398,7 @@ def main():
  p.add_argument("--reuse-decomposition")
  p.add_argument("--background",choices=["transparent","opaque"])
  p.add_argument("--supervisor-state")
- p.add_argument("--reuse-plan",help="复用同一输入图的 layer_plan.json，跳过 Astra 请求")
+ p.add_argument("--reuse-plan",help="复用同一输入图的 layer_plan.json，跳过规划请求")
  p.add_argument("--reuse-expressions",help="复用同一输入图目录中的 expression_eyes.png 和 expression_mouth.png")
  run(p.parse_args())
 if __name__=="__main__":main()

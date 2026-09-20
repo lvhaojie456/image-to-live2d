@@ -42,6 +42,7 @@ class PlannerStreamRetryTests(unittest.TestCase):
         self.root=Path(self.temp.name)
         self.image=self.root/'input.png'; Image.new('RGB',(32,32)).save(self.image)
         self.addCleanup(patch.stopall)
+        patch.dict(os.environ,{'PLANNER_MODEL':'test-planner'}).start()
         self.create=patch.object(live2d_pipeline,'client').start().return_value.chat.completions.create
         self.sleep=patch.object(live2d_pipeline.time,'sleep').start()
 
@@ -81,7 +82,7 @@ class PlannerStreamTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
             image=root/'input.png';Image.new('RGB',(32,32)).save(image)
-            with patch.object(live2d_pipeline,'client') as client:
+            with patch.dict(os.environ,{'PLANNER_MODEL':'test-planner'}), patch.object(live2d_pipeline,'client') as client:
                 client.return_value.chat.completions.create.return_value=Stream('stop')
                 live2d_pipeline.plan(Namespace(image=str(image),output=str(root/'ok')))
                 self.assertTrue((root/'ok/layer_plan.json').is_file())

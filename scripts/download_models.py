@@ -110,7 +110,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('manifest')
     p.add_argument('root')
-    p.add_argument('--endpoint', default='https://hf-mirror.com')
+    p.add_argument('--endpoint', default='https://huggingface.co', help='Hugging Face endpoint; use https://hf-mirror.com from mainland China')
     p.add_argument('--workers', type=int, default=16)
     args = p.parse_args()
     for entry in json.loads(Path(args.manifest).read_text()):

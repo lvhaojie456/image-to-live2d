@@ -8,7 +8,7 @@ python -m pip install -r requirements.txt
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "已创建 .env，请填入 APEXIN_API_KEY。"
+  echo "已创建 .env，请填入 LLM_API_KEY、IMAGE_MODEL、PLANNER_MODEL 与 REMOTE_SSH_HOST。"
 fi
 
 mkdir -p outputs work

@@ -94,7 +94,12 @@ class Supervisor:
             except (OSError, ValueError):
                 pass
         self.client_factory = client_factory
-        self.model = model or os.environ.get('SUPERVISOR_MODEL') or os.environ.get('ASTRA_MODEL', 'gpt-6-astra')
+        if model:
+            self.model = model
+        else:
+            from live2d_pipeline import env, planner_model
+            # `off` never calls a model, so it must not demand one.
+            self.model = env('SUPERVISOR_MODEL') or (planner_model() if self.mode != 'off' else None)
         self._api = None
 
     # ----- budget -------------------------------------------------------

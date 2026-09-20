@@ -43,17 +43,42 @@ def load_env(path: Path = ROOT / ".env") -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def env(name: str, *aliases: str, default: str | None = None) -> str | None:
+    """First non-empty value among `name` and its legacy aliases, else `default`."""
+    for key in (name, *aliases):
+        value = os.getenv(key)
+        if value is not None and value.strip():
+            return value.strip()
+    return default
+
+
+def required_env(name: str, *aliases: str) -> str:
+    value = env(name, *aliases)
+    if not value:
+        raise SystemExit(f"缺少 {name}，请在 .env 中设置（参考 .env.example）。")
+    return value
+
+
+def image_model() -> str:
+    """The image generation / editing model. Any OpenAI-compatible image model works."""
+    return required_env("IMAGE_MODEL")
+
+
+def planner_model() -> str:
+    """The vision model used for layer planning, gate reviews and QA reports."""
+    return required_env("PLANNER_MODEL", "ASTRA_MODEL")
+
+
 def client() -> OpenAI:
+    """OpenAI-compatible client. New names first, legacy APEXIN_* / OPENAI_* names still work."""
     load_env()
-    key = os.getenv("APEXIN_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if not key:
-        raise SystemExit("缺少 APEXIN_API_KEY，请在 .env 中设置。")
-    base_url = os.getenv("APEXIN_BASE_URL", "https://api.apexin.ai/v1").rstrip("/")
-    timeout = float(os.getenv("APEXIN_TIMEOUT_SECONDS", "600"))
-    retries = int(os.getenv("APEXIN_MAX_RETRIES", "1"))
+    key = required_env("LLM_API_KEY", "APEXIN_API_KEY", "OPENAI_API_KEY")
+    base_url = env("LLM_API_BASE_URL", "APEXIN_BASE_URL", "OPENAI_BASE_URL")
+    timeout = float(env("LLM_API_TIMEOUT_SECONDS", "APEXIN_TIMEOUT_SECONDS", default="600"))
+    retries = int(env("LLM_API_MAX_RETRIES", "APEXIN_MAX_RETRIES", default="1"))
     if timeout <= 0 or retries < 0:
-        raise SystemExit("APEXIN_TIMEOUT_SECONDS 必须为正数，APEXIN_MAX_RETRIES 不能为负数。")
-    return OpenAI(api_key=key, base_url=base_url, timeout=timeout, max_retries=retries)
+        raise SystemExit("LLM_API_TIMEOUT_SECONDS 必须为正数，LLM_API_MAX_RETRIES 不能为负数。")
+    return OpenAI(api_key=key, base_url=base_url.rstrip("/") if base_url else None, timeout=timeout, max_retries=retries)
 
 
 def slug(text: str) -> str:
@@ -93,7 +118,7 @@ def prepare_input(image: Path, output: Path) -> None:
 def generate(args) -> None:
     api = client()
     workspace = new_workspace(args.name or args.prompt[:24])
-    model = os.getenv("IMAGE_MODEL", "gpt-image-2.5-sunburst")
+    model = image_model()
     prompt = (
         args.prompt
         + "\n要求：正面或接近正面、角色完整、背景干净、四肢不要被裁切，"
@@ -140,7 +165,7 @@ def plan(args) -> None:
         raise SystemExit(f"找不到图片：{image}")
     workspace = Path(args.output).expanduser().resolve() if args.output else image.parent
     workspace.mkdir(parents=True, exist_ok=True)
-    model = os.getenv("ASTRA_MODEL", "gpt-6-astra")
+    model = planner_model()
     schema = {
         "character_summary": "string",
         "regions": {
@@ -171,9 +196,9 @@ def plan(args) -> None:
             {"type": "image_url", "image_url": {"url": image_data_uri(image)}},
         ]},
     ]
-    retries = int(os.getenv("ASTRA_STREAM_RETRIES", "1"))
+    retries = int(env("PLANNER_STREAM_RETRIES", "ASTRA_STREAM_RETRIES", default="1"))
     if retries < 0:
-        raise SystemExit("ASTRA_STREAM_RETRIES 不能为负数。")
+        raise SystemExit("PLANNER_STREAM_RETRIES 不能为负数。")
     print(f"调用 {model} 分析拆层和绑定计划…")
     for attempt in range(retries + 1):
         try:
@@ -183,11 +208,11 @@ def plan(args) -> None:
             if attempt == retries:
                 raise
             delay = 5 * (attempt + 1)
-            print(f"Astra 流式响应中断（{type(error).__name__}），{delay} 秒后重新请求…", flush=True)
+            print(f"规划模型流式响应中断（{type(error).__name__}），{delay} 秒后重新请求…", flush=True)
             time.sleep(delay)
     (workspace / "layer_plan_response.txt").write_text(text, encoding="utf-8")
     if finish_reason != "stop":
-        raise RuntimeError("Astra stream ended without a complete plan")
+        raise RuntimeError("Planner stream ended without a complete plan")
     data = extract_json(text)
     (workspace / "layer_plan.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     write_plan_markdown(data, workspace / "layer_plan.md")
@@ -198,7 +223,7 @@ def stream_plan(api, model, messages):
     """Stream one planning response and return its text with the finish reason."""
     result = api.chat.completions.create(
         model=model,
-        reasoning_effort=os.getenv('ASTRA_REASONING_EFFORT','low'),
+        reasoning_effort=env('PLANNER_REASONING_EFFORT', 'ASTRA_REASONING_EFFORT', default='low'),
         max_completion_tokens=8000,
         temperature=0.2,
         stream=True,
@@ -300,11 +325,11 @@ def remote_decompose(args) -> None:
     if not image.is_file():
         raise SystemExit(f"找不到图片：{image}")
     load_env()
-    host = os.getenv("REMOTE_SSH_HOST", "seetacloud")
-    remote_root = os.getenv("REMOTE_ROOT", "/root/live2d-ai").rstrip("/")
-    remote_python = os.getenv("REMOTE_PYTHON", "/root/miniconda3/bin/python")
-    repo = os.getenv("REMOTE_SEE_THROUGH", remote_root + "/third_party/see-through").rstrip("/")
-    model_root = os.getenv("REMOTE_MODEL_ROOT", "/root/autodl-tmp/live2d-ai/models").rstrip("/")
+    host = required_env("REMOTE_SSH_HOST")
+    remote_root = env("REMOTE_ROOT", default="/root/live2d-ai").rstrip("/")
+    remote_python = env("REMOTE_PYTHON", default="python3")
+    repo = env("REMOTE_SEE_THROUGH", default=remote_root + "/third_party/see-through").rstrip("/")
+    model_root = env("REMOTE_MODEL_ROOT", default=remote_root + "/models").rstrip("/")
     workspace = Path(args.output).expanduser().resolve() if args.output else image.parent / "see_through_remote"
     workspace.mkdir(parents=True, exist_ok=True)
     state_file = workspace / "remote_job.json"
@@ -372,7 +397,7 @@ def remote_decompose(args) -> None:
 
 def remote_status(args) -> None:
     load_env()
-    host = os.getenv("REMOTE_SSH_HOST", "seetacloud")
+    host = required_env("REMOTE_SSH_HOST")
     subprocess.run(["ssh", host, "nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader"], check=True)
 
 
@@ -380,7 +405,7 @@ def checklist(args) -> None:
     api = client()
     image = Path(args.image).expanduser().resolve()
     output = Path(args.output).expanduser().resolve() if args.output else image.parent / "qa_report.md"
-    model = os.getenv("ASTRA_MODEL", "gpt-6-astra")
+    model = planner_model()
     prompt = (
         "你是 Live2D QA。检查这张角色图是否适合图生 Live2D，输出简洁 Markdown。"
         "必须包括：可拆层部件、需要补画区域、闭眼/张嘴/转头风险、建议 Cubism 参数、人工验收清单。"
@@ -407,12 +432,12 @@ def open_cubism(args) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="AI 图生 Live2D 工作台")
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("generate", help="调用 Image-2.5 生成角色图")
+    p = sub.add_parser("generate", help="调用图像模型生成角色图")
     p.add_argument("--prompt", required=True)
     p.add_argument("--name")
     p.add_argument("--size", default="1024x1024")
     p.set_defaults(func=generate)
-    p = sub.add_parser("plan", help="调用 Astra 生成拆层与绑定计划")
+    p = sub.add_parser("plan", help="调用规划模型生成拆层与绑定计划")
     p.add_argument("--image", required=True)
     p.add_argument("--output")
     p.set_defaults(func=plan)
@@ -433,7 +458,7 @@ def main() -> None:
     p.set_defaults(func=remote_decompose)
     p = sub.add_parser("remote-status", help="查看远程 GPU 状态")
     p.set_defaults(func=remote_status)
-    p = sub.add_parser("checklist", help="调用 Astra 生成视觉 QA 报告")
+    p = sub.add_parser("checklist", help="调用规划模型生成视觉 QA 报告")
     p.add_argument("--image", required=True)
     p.add_argument("--output")
     p.set_defaults(func=checklist)
@@ -454,7 +479,7 @@ def main() -> None:
     p.add_argument('--resolution', type=int, default=1280)
     p.add_argument('--group-offload', action='store_true')
     p.add_argument('--reuse-decomposition')
-    p.add_argument('--reuse-plan', help='复用同一输入图的 layer_plan.json，跳过 Astra 请求')
+    p.add_argument('--reuse-plan', help='复用同一输入图的 layer_plan.json，跳过规划请求')
     p.add_argument('--reuse-expressions', help='复用同一输入图目录中的 expression_eyes.png 和 expression_mouth.png')
     p.add_argument('--background', choices=['transparent', 'opaque'], help='提示词生成时的背景，默认读 IMAGE_BACKGROUND（transparent）')
     p.add_argument('--supervisor-state', help='跨尝试共享的监督预算文件（制作端按任务传入）')

@@ -56,7 +56,7 @@ def repair_face(image, spec):
     points = list(spec.get('sample_points', []))
     if not points:
         # Select conservative skin samples from the lower half of the detected face.
-        # This is a fallback for a new character; Astra's measured points take precedence.
+        # This is a fallback for a new character; the planner's measured points take precedence.
         candidates = []
         for yy in range(y0 + (y1-y0)//2, max(y0+1, y1-4), max(1,(y1-y0)//8)):
             for xx in range(x0 + (x1-x0)//5, x1 - max(1,(x1-x0)//5), max(1,(x1-x0)//5)):
