@@ -7,8 +7,8 @@ import zipfile
 
 from PIL import Image
 
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from anyi_worker import Api, collect_delivery, read_diagnosis
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from adapters.anyi.worker import Api, collect_delivery, read_diagnosis
 
 
 class AnyiWorkerTests(unittest.TestCase):

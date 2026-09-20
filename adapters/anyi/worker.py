@@ -17,7 +17,7 @@ import uuid
 import zipfile
 from PIL import Image
 
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 from live2d_pipeline import load_env
 
