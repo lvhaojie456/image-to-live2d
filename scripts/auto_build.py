@@ -123,7 +123,7 @@ def motion_recipe(package,scale=1.0):
 def write_report(workspace,args,stages):
  data={"pipeline":"prompt_or_image_to_cubism","status":"complete","input_mode":"prompt" if args.prompt else "image","requested_prompt":args.prompt,"stages":stages,"output":str(workspace),"limitations":["Cubism 5.3 still needs artist review of keyforms and physics.","A single image cannot reveal all hidden side/back pixels."]}
  (workspace/"build.json").write_text(json.dumps(data,ensure_ascii=False,indent=2))
- (workspace/"BUILD.md").write_text("# 图生 Live2D 完整构建结果\n\n本目录由 python live2d_pipeline.py build 生成，包含原图、Astra 规划、See-through 分层 PSD、表情素材、Cubism 精修 PSD、程序化身体动作模型和验证报告。\n\nbody-motion/model/MotionCharacter.cmo3 是可在 Cubism 5.3 中继续编辑的工程起点；model3.json 已包含 BodyIdle、Breathing、BodyLean、Arms 和 Skirt 动作。\n\n自动阶段已经完成：输入、生图、规划、拆层、透明层整理、表情素材、身体动作关键形、motion3 曲线、官方 Core 结构检查和动作采样。手工阶段包括连续表情关键形、隐藏区域绘画、手臂/裙摆极值修形、头发与裙摆物理的最终手感，以及 VTube Studio 面捕验收。\n",encoding="utf-8")
+ (workspace/"BUILD.md").write_text("# 图生 Live2D 完整构建结果\n\n本目录由 python live2d_pipeline.py build 生成，包含原图、拆层规划、See-through 分层 PSD、表情素材、Cubism 精修 PSD、程序化身体动作模型和验证报告。\n\nbody-motion/model/MotionCharacter.cmo3 是可在 Cubism 5.3 中继续编辑的工程起点；model3.json 已包含 BodyIdle、Breathing、BodyLean、Arms 和 Skirt 动作。\n\n自动阶段已经完成：输入、生图、规划、拆层、透明层整理、表情素材、身体动作关键形、motion3 曲线、官方 Core 结构检查和动作采样。手工阶段包括连续表情关键形、隐藏区域绘画、手臂/裙摆极值修形、头发与裙摆物理的最终手感，以及 VTube Studio 面捕验收。\n",encoding="utf-8")
 
 def verification_failure(motion):
  """Classify a failed verification: tunable when only feet drift or flipped triangles failed."""
