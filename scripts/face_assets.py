@@ -92,7 +92,8 @@ def build_face_assets(base, mouth, eyes, recipe_path, output):
     output.mkdir(parents=True, exist_ok=True)
     m, e = rgba(mouth), rgba(eyes)
     edit_size = tuple(recipe['edit_size'])
-    if m.size != edit_size or e.size != edit_size:
+    sizes = recipe.get('edit_sizes', {})
+    if m.size != tuple(sizes.get('mouth', edit_size)) or e.size != tuple(sizes.get('eyes', edit_size)):
         raise ValueError('Edit dimensions changed; remeasure the expression regions')
     for name, path in [('mouth',mouth),('eyes',eyes)]:
         expected_hash = recipe.get('edit_sha256', {}).get(name)
