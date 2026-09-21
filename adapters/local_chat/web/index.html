@@ -7,32 +7,53 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <main class="companion">
-    <section class="portrait" aria-label="可互动的卡通形象">
-      <div class="portrait-top"><span class="eyebrow">一个属于你的聊天角落</span><span class="ai-label">AI 形象</span></div>
-      <canvas id="avatar" aria-label="拖动视线或点击形象互动"></canvas>
-      <div class="bubble" id="bubble" role="status">正在准备见面…</div>
-      <div class="portrait-bottom"><span id="avatar-status"><i></i> 加载形象</span><button id="zoom" class="ghost" aria-label="切换全身或近景">看全身 ↗</button></div>
+  <main class="companion" id="scene">
+    <div class="room" aria-hidden="true"><div class="window-light"></div><div class="sea"></div><div class="window-frame"></div><div class="sunlight"></div><div class="floor"></div><div class="plant"><i></i><i></i><i></i><i></i></div></div>
+    <header class="scene-header">
+      <a class="brand" href="/?mode=interaction"><span class="brand-mark">忆</span><span>陪伴时刻<small>A LITTLE CLOSER</small></span></a>
+      <div class="scene-tools"><span class="ai-label">AI 形象</span><button id="guide-open" class="icon" aria-label="互动玩法">?</button><button id="settings-open" class="icon" aria-label="设置">⚙</button></div>
+    </header>
+    <section class="portrait" id="stage" aria-label="可互动的卡通形象">
+      <canvas id="avatar" aria-label="互动角色：可摸头、戳脸、拍肩或拉手" tabindex="0"></canvas>
+      <div id="touch-hint" class="touch-hint" hidden></div>
+      <div id="touch-zones" class="touch-zones" aria-hidden="true"></div>
+      <div id="effects" class="effects" aria-hidden="true"></div>
+      <div id="held-prop" class="held-prop" aria-hidden="true" hidden></div>
+      <div id="prop-ghost" class="prop-ghost" aria-hidden="true" hidden></div>
+      <div id="drop-target" class="drop-target" hidden>松开，送给他</div>
     </section>
-    <section class="chat">
-      <header class="chat-head">
-        <div><div class="eyebrow">LET’S TALK</div><h1>和<span id="name">小忆</span>聊一会儿<span class="dot">。</span></h1><p>说说今天，或只是打个招呼。</p></div>
-        <button id="settings-open" class="icon" aria-label="设置" title="设置">⚙</button>
-      </header>
-      <div class="actions" aria-label="动作互动">
-        <button data-action="wink">眨眨眼</button><button data-action="nod">点个头</button><button data-action="wave">打招呼</button>
-      </div>
+    <aside class="character-card">
+      <div class="eyebrow">AFTERNOON · 01</div><h1 id="name">小忆</h1><div id="avatar-status"><i></i> 正在准备见面</div>
+      <div class="mood"><span id="mood">悠闲</span><span>·</span><span id="interaction-count">初次见面</span></div>
+    </aside>
+    <nav class="action-rail" aria-label="角色动作">
+      <button data-action="head"><span>✧</span>摸摸头</button><button data-action="wink"><span>⌁</span>眨眨眼</button><button data-action="wave"><span>♧</span>打招呼</button><button data-action="stretch"><span>↔</span>活动一下</button>
+      <div class="rail-line"></div><button id="zoom" aria-label="切换全身或近景"><span>⤢</span><b>看全身</b></button><button id="zones-toggle" aria-label="显示触摸位置" aria-pressed="false"><span>◎</span>触摸位置</button>
+    </nav>
+    <div class="prop-shelf" aria-label="互动道具"><span class="shelf-title">递给他一点小心意</span><div>
+      <button class="prop" data-prop="tea" aria-label="递杯茶，可拖到角色身上"><span class="tea-art" aria-hidden="true"><i></i></span><b>一杯热茶</b></button>
+      <button class="prop" data-prop="gift" aria-label="送小礼物，可拖到角色身上"><span class="gift-art" aria-hidden="true"><i></i></span><b>小小礼物</b></button>
+    </div><small>点击递出 · 拖动也可以</small></div>
+    <section class="dialogue" aria-label="角色回应">
+      <div class="dialogue-top"><span id="dialogue-name">小忆</span><span id="reaction-label">见面时刻</span><button id="stop" hidden>停止朗读</button></div>
+      <p id="bubble" role="status">嗨，试着摸摸我的头，或者拉一拉我的手。</p>
+      <div class="dialogue-bottom"><span id="interaction-tip">轻触有回应，按住也有小惊喜</span><button id="chat-open" aria-controls="chat-panel" aria-expanded="false">和他聊聊 <span>↗</span></button></div>
+    </section>
+    <section class="chat" id="chat-panel" aria-label="聊天侧栏" inert>
+      <header class="chat-head"><div><div class="eyebrow">LET’S TALK</div><h2>慢慢说，我在听<span>。</span></h2></div><button id="chat-close" class="icon" aria-label="收起聊天">×</button></header>
       <div id="messages" class="messages" aria-live="polite" aria-relevant="additions text"></div>
       <div class="suggestions" id="suggestions"><button>你好，介绍一下自己</button><button>今天有点累</button><button>陪我想个周末计划</button></div>
       <div class="notice" id="notice" role="status"></div>
       <form id="composer" class="composer">
-        <label class="sr-only" for="message">发消息</label>
-        <textarea id="message" rows="2" maxlength="1200" placeholder="想说什么都可以…" required></textarea>
-        <div class="composer-bottom"><button type="button" id="microphone" class="mic" aria-label="开始语音输入" hidden>说话</button><button type="button" id="record-cancel" hidden>取消</button><label class="voice"><input id="voice" type="checkbox" checked>语音回复</label><button type="button" id="stop" hidden>停止朗读</button><button type="submit" id="send">发送 <span>↗</span></button></div>
-      </form>
-      <footer>移动鼠标，他会看向你。点击形象，也会有回应。<br>聊天记录保存在本机，回复由 AI 生成。</footer>
+        <label class="sr-only" for="message">发消息</label><textarea id="message" rows="2" maxlength="1200" placeholder="想说什么都可以…" required></textarea>
+        <div class="composer-bottom"><button type="button" id="microphone" class="mic" aria-label="开始语音输入" hidden>说话</button><button type="button" id="record-cancel" hidden>取消</button><label class="voice"><input id="voice" type="checkbox" checked>语音回复</label><button type="submit" id="send">发送 ↗</button></div>
+      </form><footer>AI 回复 · 聊天记录保存在本机</footer>
     </section>
+    <div id="scene-notice" class="scene-notice" role="status" hidden></div>
   </main>
+  <dialog id="guide"><div class="dialog-head"><h2>试试这些小互动</h2><button id="guide-close" class="icon" aria-label="关闭互动玩法">×</button></div>
+    <ol class="guide-list"><li><b>摸头</b><span>按住头发，左右轻轻揉动；闭眼和倾头会跟着你。</span></li><li><b>戳脸、拍肩</b><span>不同地方有不同反应，连续戳几次还有另一句回应。</span></li><li><b>拉拉手</b><span>按住手，往两侧拖动。他会倾身跟随，松开缓缓回正。</span></li><li><b>递点小心意</b><span>把茶或礼物拖到角色身上，也可以直接点道具。</span></li><li><b>聊天</b><span>打开“和他聊聊”，输入文字或用麦克风说话。</span></li></ol><p>也可使用右侧动作按钮。角色画布获得焦点时，1 摸头 / 2 戳脸 / 3 碰手 / 4 活动 / Esc 松手。</p>
+  </dialog>
   <dialog id="settings">
     <form id="profile">
       <div class="dialog-head"><h2>让他更像你的伙伴</h2><button type="button" id="settings-close" class="icon" aria-label="关闭设置">×</button></div>
@@ -49,6 +70,6 @@
   <script src="/runtime/live2dcubismcore.min.js"></script>
   <script src="/runtime/pixi.min.js"></script>
   <script src="/runtime/cubism4.min.js"></script>
-  <script src="/app.js"></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

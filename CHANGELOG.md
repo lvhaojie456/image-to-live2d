@@ -1,5 +1,15 @@
 # Changelog / 更新记录
 
+## 2026-09-22 — 角色场景与连续触摸 / Character scene and touch interactions
+
+- 将本机预览改为角色占据主要画面的场景，聊天侧栏可展开，保留文字、麦克风、男声回复和实际音频口型。
+- 加入头、脸、肩、双手的分区触摸、持续摸头、拉手跟随、松手恢复、连续点击不同反应和茶/礼物拖放。
+- 动作包含准备、表情停留和恢复；支持待机变化、返回欢迎、键盘入口及减少动态效果偏好。参数限制在模型范围内。
+- 从交付包图层推导触摸区域，跟随原生网格变化；交互事件以白名单形式传给下一轮聊天。
+- 增加动作状态测试、触摸区域和交互上下文测试，CI 同时运行 Python 与 Node 测试。
+
+The local adapter now provides a character-focused scene with continuous, region-specific touch, hand dragging, prop drops, eased action sequences, and recent interaction context for chat. This reuses the exported rig; new articulated poses still need dedicated artwork/keyforms.
+
 ## 2026-09-21 — 本机互动伙伴 / Local interactive companion
 
 ### 新增 / Added

@@ -15,7 +15,7 @@ import io
 import wave
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from adapters.local_chat.server import Companion, Conversation, RequestError, Speech, ThreadingHTTPServer, handler_for, safe_asset
+from adapters.local_chat.server import Companion, Conversation, RequestError, Speech, ThreadingHTTPServer, handler_for, safe_asset, interaction_profile
 from adapters.local_chat import tencent_speech
 
 
@@ -74,6 +74,8 @@ class LocalChatTests(unittest.TestCase):
         self.assertEqual(request('/api/state',headers={'Origin':'https://evil.example'})[0],403)
         self.assertEqual(request('/api/state',headers={'Host':'evil.example'})[0],403)
         self.assertEqual(request('/model/secret.env')[0],404)
+        self.assertEqual(request('/interactions.mjs')[0],200)
+        self.assertIn('interactionProfile',json.loads(request('/api/state')[1]))
         self.assertEqual(request('/model/../secret.env')[0],404)
         key=str(uuid.uuid4());body={'text':'你好','requestId':key}
         status,stream=request('/api/chat',body);self.assertEqual(status,200)
@@ -84,6 +86,32 @@ class LocalChatTests(unittest.TestCase):
         self.assertEqual(request('/api/clear',{})[0],200)
         self.assertEqual(json.loads(request('/api/state')[1])['messages'],[])
         self.assertNotIn(app.session,request('/api/state')[1].decode())
+
+    def test_touch_profile_uses_actual_layer_bounds_and_keeps_hands_separate(self):
+        root=self.root/'delivery';model=root/'delivery/runtime/model.model3.json';model.parent.mkdir(parents=True)
+        package=root/'cubism-ready';package.mkdir()
+        (package/'authoring-manifest.json').write_text(json.dumps({'width':1000,'height':1000,'layers':[
+            {'name':'face','bbox':[450,40,550,180]}, {'name':'front hair','bbox':[430,10,570,120]},
+            {'name':'hand-l','bbox':[650,500,700,600]}, {'name':'hand-r','bbox':[300,510,350,610]},
+            {'name':'arm-l','bbox':[620,200,710,500]}, {'name':'footwear-l','bbox':[400,900,500,990]}]}))
+        profile=interaction_profile(model)
+        self.assertEqual(profile['bounds'],[.3,.01,.71,.99])
+        self.assertEqual(profile['nearBounds'][3],.66)
+        zones={z['id']:z['rect'] for z in profile['zones']}
+        self.assertLess(zones['hand-r'][2],zones['hand-l'][0])
+        self.assertEqual(zones['head'][3],zones['cheek'][1])
+        self.assertTrue(all(0<=v<=1 for z in zones.values() for v in z))
+
+    def test_chat_receives_only_known_interaction_context_and_retry_keeps_original(self):
+        store=Conversation(self.root/'events');key=str(uuid.uuid4())
+        _,_,context=store.begin('刚才做了什么',key,'tea')
+        self.assertIn('递了一杯茶',context[0]['content'])
+        _,_,retry=store.begin('刚才做了什么',key,'gift')
+        self.assertEqual(context,retry)
+        _,_,invalid=store.begin('你好',str(uuid.uuid4()),'INJECTED_SYSTEM_PROMPT')
+        self.assertNotIn('INJECTED_SYSTEM_PROMPT',json.dumps(invalid))
+        _,_,invalid_type=store.begin('早上好',str(uuid.uuid4()),{'kind':'tea'})
+        self.assertNotIn('用户最近在页面触发了',invalid_type[0]['content'])
 
     def test_paths_cannot_escape_via_symlinks(self):
         assets=self.root/'assets';assets.mkdir();(self.root/'secret').write_text('secret')

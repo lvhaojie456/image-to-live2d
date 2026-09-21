@@ -9,10 +9,13 @@ The local adapter turns an existing exported model into a chat companion. It use
 - 文字聊天，回复逐步显示；保存最近 80 条本机消息，最多 24 条作为下一轮上下文。
 - 中文语音朗读、重播、静音和中断，可选择 macOS 系统语音或腾讯云男声；从实际播放 PCM 的 RMS 驱动嘴部，暂停或结束后闭嘴。
 - 点按录音、停止识别、取消录音；识别文字先填入输入框，确认后发送。首次需单独同意录音发往腾讯云。
-- 鼠标或触摸拖动的视线跟随；点击形象、眨眼、点头、打招呼按钮触发回应。
-- 半身/全身切换、改名字、清空本机历史与语音缓存，支持桌面及手机尺寸。
+- 角色占据主要画面的互动场景，聊天侧栏可收起；近景/全身切换，桌面和手机布局。
+- 头、脸、左右肩、左右手六个区域：点触、连续摸头、拉手跟随与松手恢复；连续戳戳会改变反应。
+- 可点击或拖放茶和礼物；眨眼、点头、招呼、活动身体，配合表情、语音和小特效。
+- 待机变化和返回欢迎；触摸反馈不打断聊天语音，支持减少动态效果偏好和键盘入口。
+- 最近 60 秒内的交互事件可带入下一轮聊天；改名和清空本机历史与语音缓存。
 
-Text replies stream into the conversation. Installed macOS speech or Tencent TTS produces reply audio; Web Audio measures its actual amplitude to drive the mouth. Optional microphone input uses Tencent sentence recognition, places the transcript in the composer for review, and never sends it as a chat message automatically. Gaze follows the pointer, clicks trigger gestures, and the page supports replay, stop, mute, rename and local history deletion.
+Text replies stream into the conversation. Installed macOS speech or Tencent TTS produces reply audio; Web Audio measures its actual amplitude to drive the mouth. Optional microphone input uses Tencent sentence recognition, places the transcript in the composer for review, and never sends it as a chat message automatically. Gaze follows the pointer. Continuous head rubbing, region-specific taps, hand dragging/recovery and draggable tea/gift props drive native model parameters. A collapsible chat panel supports replay, stop, mute, rename and local history deletion.
 
 ## 运行 / Run
 
@@ -34,6 +37,42 @@ python adapters/local_chat/server.py \
 命令输出本机 URL，并写到 `--data/server.json`。默认随机端口，可通过 `--port` 固定。只监听 `127.0.0.1`，用输出 URL 打开；不提供公网发布或其它设备访问。
 
 Point `--model` at your exported model3 manifest and supply your installed Cubism/Pixi JavaScript runtimes. The configured API key stays server-side. The server prints a localhost URL and records it in the private data directory; it never binds to an external interface.
+
+## 角色互动 / Character interactions
+
+| 操作 | 反馈 |
+| --- | --- |
+| 点头发 / 按住左右揉 | 倾头、闭眼、放松；按住时持续跟随 |
+| 戳脸 / 连续戳几次 | 转头躲闪、眯眼；第三次切换回应 |
+| 拍肩 | 转头、身体倾斜、回应 |
+| 拉动左右手后松开 | 对应手臂与身体跟随，缓动恢复 |
+| 点道具 / 拖到角色身上 | 茶或礼物出现在手边，表情与回应改变；拖到空白处不触发 |
+| 右侧动作按钮 | 摸头、眨眼、招呼、左右活动；可重复触发并切换台词 |
+| “触摸位置” | 查看区域；区域随实际网格移动 |
+| 聚焦角色后按 1 / 2 / 3 / 4 | 摸头 / 戳脸 / 碰手 / 活动，Esc 取消持续拖动 |
+
+`web/interactions.mjs` 是独立、可测试的动作调度器，包含动作关键帧、缓动、打断混合、点按/持续拖动、连续点击反应、待机调度和参数限幅。`web/app.js` 将它接到 Cubism 的 `beforeModelUpdate`，口型仍只跟随实际播放音频。动作会即时反馈，不等待模型服务。触摸语音不会插入正在播放的聊天语音。
+
+服务优先读取模型旁的 `interaction.json`；否则尝试交付包 `cubism-ready/authoring-manifest.json` 或构建目录 `materials/motion-manifest.json`。按图层 bbox 推导近景/全身范围和六个触摸区域，在浏览器中绑定匹配网格，随当前顶点位置更新。没有这些元数据时只能使用居中人物的默认区域，其他排版应提供配置：
+
+```json
+{
+  "bounds": [0.3, 0.01, 0.7, 0.98],
+  "nearBounds": [0.3, 0.01, 0.7, 0.65],
+  "zones": [
+    {"id": "head", "label": "头发 · 按住揉一揉", "rect": [0.42, 0.01, 0.58, 0.1]},
+    {"id": "cheek", "label": "脸颊 · 轻戳", "rect": [0.44, 0.1, 0.56, 0.17]}
+  ]
+}
+```
+
+矩形是 `[left, top, right, bottom]`，除以原始画布宽高后的比例。区域 ID 支持 `head`、`cheek`、`shoulder`、`hand-l`、`hand-r`。可附 `mesh`（原生 ArtMesh ID）和 `meshRect`（该网格原始 bbox）启用随网格移动；旧版 Handwear 命名会通过初始 bbox 匹配。`nearBounds` 应包含手部，避免近景下无法拉手。
+
+当前动作复用模型已有的眼口、头部、身体和手臂摆动参数。道具是手边的场景叠加物，还没有弯肘持杯、走路、换姿势等专用关键形；这些需要补画、关节绑定并在 Cubism 精修。此适配器不改变模型的 `.cmo3`，动作编排保存在项目代码中。
+
+触摸事件仅传固定 ID，后端转换成白名单中文描述，作为本轮相关上下文；不接受客户端注入任意系统提示词。语音识别后仍需点击发送。互动计数是本次页面会话的计数，刷新重置，不用于推断人物的真实情绪。
+
+This scene follows the interaction principles described in the [Live2D interview with the Azur Lane team](https://www.live2d.com/business/interview/azurlane/): gaze, intentional motion timing and animations within the rig's actual range. It contains no game artwork or extracted game assets. Actions are implemented using the current model's parameters; articulated arms, new poses and actual prop holding require new keyforms.
 
 ## 麦克风与云端男声 / Microphone and cloud voice
 
@@ -68,6 +107,13 @@ The default voice is the installed Chinese system voice `Tingting`, not a clone 
 - Session cookie 为 HttpOnly / SameSite=Strict；校验 Host、Origin 和 POST 客户端头。模型只开放清单中已校验的文件路径，不开放任意项目文件。浏览器拿不到供应商密钥。
 - 清空操作增加会话代数，正在生成的旧回复不能重新写回已清空的历史。
 
-本地 55 项测试通过，其中新增测试覆盖历史幂等、上下文与清空后的过期回复、同源限制、路径隔离、无 shell 的语音调用、音频格式/时长校验与云端语音缓存。真实两轮对话、语音非零口型、停止闭嘴、眨眼、视线跟随、刷新恢复和清空已通过桌面及手机布局验证；浏览器用合成测试语音作为模拟麦克风输入，真实经过腾讯云识别、对话模型、腾讯云男声合成和音频口型。验收历史已清空。
+Python 测试覆盖历史幂等、上下文与清空后的过期回复、同源限制、路径隔离、无 shell 的语音调用、音频格式/时长校验、云端语音缓存，以及图层区域推导、交互上下文白名单和重试一致性。Node 测试覆盖全部动作的参数限幅与结束恢复、连续点击、持续摸头、拖动越界/取消、待机避让和减少动态效果。
 
-The tests cover idempotent history, clearing during generation, origin/path restrictions and speech subprocess arguments. Browser verification covers real multi-turn replies, audio-driven lips, stopping playback, gestures, gaze, history restoration and mobile layout.
+```bash
+python -m unittest discover -s tests -v
+node --test tests/test_interactions.mjs
+```
+
+真实浏览器验收包括触摸、拉手恢复、空白不触发、道具拖放、六个区域跟随网格、真实聊天/男声口型和手机/桌面布局。聊天测试使用独立数据目录，已有用户会话保留。麦克风链路此前已用模拟输入通过腾讯云识别、对话与男声合成验证；本轮场景更新没有更换录音链路。
+
+Tests cover history idempotency, clearing during generation, origin/path restrictions, speech validation, touch profile geometry, whitelisted interaction context, motion bounds, drag/release behavior, idle suppression and reduced motion. Browser verification uses a separate conversation directory and real configured chat/TTS services.

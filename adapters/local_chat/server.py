@@ -26,6 +26,53 @@ STATIC = Path(__file__).parent / 'web'
 RUNTIME_FILES = {'live2dcubismcore.min.js', 'pixi.min.js', 'cubism4.min.js'}
 MAX_BODY = 12_000
 MAX_MESSAGE = 1200
+INTERACTIONS = {'head':'摸头', 'cheek':'戳脸', 'shoulder':'拍肩', 'hand':'碰手',
+                'release':'拉手后松开', 'tease':'连续戳戳', 'wink':'眨眼', 'nod':'点头',
+                'wave':'打招呼', 'stretch':'活动身体', 'tea':'递了一杯茶', 'gift':'送了一个小礼物'}
+
+
+def interaction_profile(model):
+    """Derive touch regions from delivered layers, in source-canvas fractions."""
+    candidates = [model.parent / 'interaction.json',
+                  model.parent.parent.parent / 'cubism-ready' / 'authoring-manifest.json',
+                  model.parent.parent / 'materials' / 'motion-manifest.json']
+    for candidate in candidates:
+        if not candidate.is_file(): continue
+        source = json.loads(candidate.read_text())
+        if candidate.name == 'interaction.json': return source
+        width, height = source['width'], source['height']
+        layers = {item['name']: item['bbox'] for item in source['layers'] if item.get('bbox')}
+        if 'face' not in layers: continue
+        def union(names):
+            boxes = [layers[n] for n in names if n in layers]
+            return [min(b[0] for b in boxes), min(b[1] for b in boxes),
+                    max(b[2] for b in boxes), max(b[3] for b in boxes)]
+        def normalized(box): return [round(v / (width if i % 2 == 0 else height), 6) for i, v in enumerate(box)]
+        face = layers['face']; head = union(['face', 'front hair', 'back hair'])
+        cut = face[1] + (face[3] - face[1]) * .48
+        zones = [{'id': 'cheek', 'label': '脸颊 · 轻戳', 'rect': normalized([face[0], cut, face[2], face[3]]),
+                  'mesh':'ArtMeshFace', 'meshRect':normalized(face)},
+                 {'id': 'head', 'label': '头发 · 按住揉一揉', 'rect': normalized([head[0], head[1], head[2], cut]),
+                  'mesh':'ArtMeshFrontHair', 'meshRect':normalized(layers.get('front hair', head))}]
+        for side in ('l', 'r'):
+            if 'hand-' + side in layers:
+                x1,y1,x2,y2 = layers['hand-' + side]
+                zones.append({'id': 'hand-' + side, 'label': '手 · 按住左右拉动',
+                              'rect': normalized([x1-12, y1-8, x2+12, y2+8]),
+                              'mesh':'ArtMeshHand'+side.upper(), 'meshRect':normalized([x1,y1,x2,y2])})
+            if 'arm-' + side in layers:
+                x1,y1,x2,y2 = layers['arm-' + side]
+                zones.append({'id': 'shoulder', 'label': '肩膀 · 拍一拍',
+                              'rect': normalized([x1, y1, x2, y1+(y2-y1)*.28]),
+                              'mesh':'ArtMeshArm'+side.upper(), 'meshRect':normalized([x1,y1,x2,y2])})
+        bounds = union(list(layers)); hands = [box[3] for name,box in layers.items() if name.startswith('hand-')]
+        near_bottom = min(bounds[3], max(hands, default=bounds[1]+(bounds[3]-bounds[1])*.68)+50)
+        return {'bounds': normalized(bounds), 'nearBounds': normalized([bounds[0],bounds[1],bounds[2],near_bottom]), 'zones':zones}
+    # A centered portrait is a fallback. Exporters can supply interaction.json for other layouts.
+    return {'bounds':[.25,0,.75,1], 'nearBounds':[.25,0,.75,.7], 'zones':[
+        {'id':'head','label':'头发 · 按住揉一揉','rect':[.38,.02,.62,.15]},
+        {'id':'cheek','label':'脸颊 · 轻戳','rect':[.41,.15,.59,.23]},
+        {'id':'shoulder','label':'肩膀 · 拍一拍','rect':[.3,.25,.7,.35]}]}
 
 
 class RequestError(Exception):
@@ -89,15 +136,17 @@ class Conversation:
             self.messages = []
             self.save()
 
-    def begin(self, text, request_id):
+    def begin(self, text, request_id, interaction=None):
         with self.lock:
             previous = next((m for m in self.messages if m.get('requestId') == request_id and m['role'] == 'assistant'), None)
             if any(m.get('requestId') == request_id and m['role'] == 'user' and m['content'] != text for m in self.messages):
                 raise RequestError(409, 'request_conflict')
             if previous: return None, previous, None
             if not any(m.get('requestId') == request_id and m['role'] == 'user' for m in self.messages):
-                self.messages.append({'id': secrets.token_hex(12), 'role': 'user', 'content': text,
-                                      'requestId': request_id, 'createdAt': time.time()})
+                item = {'id': secrets.token_hex(12), 'role': 'user', 'content': text,
+                        'requestId': request_id, 'createdAt': time.time()}
+                if isinstance(interaction, str) and interaction in INTERACTIONS: item['interaction'] = interaction
+                self.messages.append(item)
                 self.messages = self.messages[-80:]
                 self.save()
             context = [{'role': m['role'], 'content': m['content']} for m in self.messages[-24:]]
@@ -107,9 +156,13 @@ class Conversation:
                 '你是AI形象，不是参考照片中的真人；不要编造真人经历、身份、记忆，或声称看见摄像头。'
                 '记住本次提供的聊天上下文。每次通常回复一到三句、最多120个中文字，紧贴用户的话，适当提问。'
                 '不要用Markdown、角色名标签、括号动作或舞台说明，回答会被朗读。'
-                '页面确实支持眨眼、点头、轻摆手臂和视线跟随；用户可以点相应按钮。'
+                '页面支持分区触摸：摸头、戳脸、拍肩、拉手跟随和松手回弹；还有递茶、送礼、眨眼、点头、活动身体、视线跟随。'
+                '动作是卡通模型的表情与身体摆动，不具备真正的弯肘拿物或走路动作。'
                 '不要承诺页面不支持的能力，不要声称已经修改文件或操作外部服务。'
             )
+            request_message = next(m for m in self.messages if m.get('requestId') == request_id and m['role'] == 'user')
+            recent = INTERACTIONS.get(request_message.get('interaction'))
+            if recent: prompt += f'用户最近在页面触发了“{recent}”互动动画。与本轮话题相关时自然地回应这件事。'
             return self.generation, None, [{'role': 'system', 'content': prompt}, *context]
 
     def finish(self, generation, request_id, text):
@@ -169,6 +222,7 @@ class Companion:
     def __init__(self, model, runtime, data, chat_client, chat_model, voice='Tingting'):
         self.model, self.runtime = model.resolve(), runtime.resolve()
         self.assets = model_assets(self.model)
+        self.interaction_profile = interaction_profile(self.model)
         for name in RUNTIME_FILES: safe_asset(self.runtime, name)
         self.conversation = Conversation(data)
         self.speech = tencent_speech.TencentSpeech(data, os.getenv('LOCAL_TTS_VOICE', '603006')) if os.getenv('LOCAL_TTS_PROVIDER') == 'tencent' else Speech(data, voice)
@@ -239,13 +293,13 @@ def handler_for(companion):
                 if path == '/api/state':
                     return self.json(200, {**companion.conversation.snapshot(), 'speechAvailable': companion.speech.available,
                                            'modelPath': '/model/' + companion.model.name, 'voice': companion.speech.voice,
-                                           'asrAvailable': tencent_speech.configured(),
+                                           'asrAvailable': tencent_speech.configured(), 'interactionProfile': companion.interaction_profile,
                                            'speechProvider': 'tencent' if isinstance(companion.speech,tencent_speech.TencentSpeech) else 'system'})
                 if path.startswith('/model/') and path[7:] in companion.assets:
                     file = safe_asset(companion.model.parent, path[7:])
                 elif path.startswith('/runtime/') and path[9:] in RUNTIME_FILES:
                     file = safe_asset(companion.runtime, path[9:])
-                elif path in {'/app.js', '/app.css'}:
+                elif path in {'/app.js', '/app.css', '/interactions.mjs'}:
                     file = STATIC / path[1:]
                 elif re.fullmatch(r'/audio/[a-f0-9]{64}\.(?:wav|mp3)', path):
                     file = safe_asset(companion.speech.directory, path.rsplit('/', 1)[1])
@@ -298,7 +352,7 @@ def handler_for(companion):
             if not companion.conversation.turn_lock.acquire(blocking=False): raise RequestError(409, 'chat_busy')
             stream = None
             try:
-                generation, previous, messages = companion.conversation.begin(text.strip(), request_id)
+                generation, previous, messages = companion.conversation.begin(text.strip(), request_id, body.get('interaction'))
                 self.send_headers(200, 'application/x-ndjson; charset=utf-8')
                 self.send_header('Connection', 'close'); self.end_headers(); self.close_connection = True
                 def emit(event):
