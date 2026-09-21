@@ -1,5 +1,30 @@
 # Changelog / 更新记录
 
+## 2026-09-21 — 连续眼口关键形 / Continuous eye and mouth keyforms
+
+### 修复 / Fixed
+
+- 待机眨眼的余弦窗口原先覆盖多个周期，导致一次眨眼内重复闭合并在窗口边缘跳变；改为一次平滑闭合/张开脉冲。
+- 新增可选 `LIVE2D_CONTINUOUS_EXPRESSIONS=true`，用于本次卡通人物的连续眼口绑定：局部清除脸底图的眼口残留，按闭眼素材测量曲线与颜色生成平滑眼睑线，眼白闭合与虹膜遮挡协同，避免半透明完整眼形叠加。
+- 连续嘴形保留原始上下唇的厚度和颜色，牙舌恢复独立语义并受口腔遮罩限制，避免所有嘴部素材一起被压成一条硬缝；嘴角参数具备可见变化。
+- 眼口局部网格加密，保留原图脸型、发型、上衣和米黄色裤子。
+
+### 新增 / Added
+
+- 精确慢速眼睛、嘴巴开合与嘴形组合采样，结构验证由 370 增至 555 个姿态；输出 `eyes-slow.gif` 和 `mouth-slow.gif`。
+- 视觉审查增加慢速眼口序列，头部取景包含头发，避免裁图把发梢误报为模型缺损。
+- 眨眼连续性、原脸无关像素与 alpha 保留、上下唇分区不重叠测试。
+
+### 兼容性 / Compatibility
+
+连续表情模式默认关闭，须在新构建中显式启用；它会重建眼口底图与关键形，适合有独立眼白和唇部素材的卡通人物。既有工程仍走原绑定路径。旧模型需重新制作素材和导出，不能仅替换 motion3 文件得到新眼口效果。全局眨眼曲线修复对新导出的待机动作生效。
+
+The optional continuous-expression mode rebuilds facial bases and keyforms, preserves neutral lips, and clips independent teeth/tongue to the cavity. Existing projects keep the legacy binding path unless the mode is explicitly enabled. New verification renders slow expression sweeps, while the idle blink fix removes repeated pulses.
+
+### 验证 / Validation
+
+51 项单元测试通过。本次真实卡通人物重新导出后通过官方 Core 和 555 个动作采样（零翻转、零退化）；慢速眼口视觉审查通过。桌面 1120×840、手机 390×760 WebGL 均加载成功，眼口参数控制生效，无脚本错误。关闭新模式重导出的旧工程 MOC 与原版 SHA-256 完全一致。没有修改安忆线上服务、用户数据或生产 worker。
+
 ## 2026-09-20 — 导出模型视觉修复 / Exported-model visual repairs
 
 同步安忆制作端提交 [2a794f9](https://github.com/lvhaojie456/anyi-beijing/commit/2a794f9) 的视觉修复与新版交付协议。保留独立仓库的 `adapters/anyi/` 目录、`LLM_*` / `PLANNER_*` 通用配置、旧变量别名、许可与中英文说明。

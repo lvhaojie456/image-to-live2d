@@ -79,11 +79,11 @@ The engine commit and patch hashes are verified first. psd2live builds meshes, d
 
 ## 8. 检查模型 / Verify
 
-`verify_body_motion.run` 用 JDK 编译 Agent Kit 的 `render_core.java`、`validate_core.java` 与本仓库的 `BodyMotionSequence.java`，链接 `CUBISM_CORE_DIR` 里的官方 Core，渲染一张 `poses.tsv`：五个身体参数的全部极值组合、每个参数的单独极值、待机循环按 12 fps 采样的帧、四个单项动作各 24 帧，额外包含双眼闭合、左右单眼、半开嘴、全开嘴、笑嘴组合、闭眼张嘴七项，共 370 个姿态。检查：顶点有限、无翻转与退化三角形、**脚底位移 < 0.25 px**。同时验证 `ParamArm*` 与 `ParamSkirtSwing` 只影响它们该影响的网格。
+`verify_body_motion.run` 用 JDK 编译 Agent Kit 的 `render_core.java`、`validate_core.java` 与本仓库的 `BodyMotionSequence.java`，链接 `CUBISM_CORE_DIR` 里的官方 Core，渲染一张 `poses.tsv`：五个身体参数的全部极值组合、每个参数的单独极值、待机循环按 12 fps 采样的帧、四个单项动作各 24 帧，额外包含双眼闭合、左右单眼、半开嘴、全开嘴、笑嘴组合、闭眼张嘴七项，再加眼口慢速扫描和嘴形组合，共 555 个姿态。检查：顶点有限、无翻转与退化三角形、**脚底位移 < 0.25 px**。同时验证 `ParamArm*` 与 `ParamSkirtSwing` 只影响它们该影响的网格。
 
 失败时如果只是脚底位移或翻转（`verification_failure()` 判定为 tunable），按 `MOTION_SCALES = (1.0, 0.66, 0.33)` 缩小全部幅度重新导出重新校验，最多两次，结果记在 `validation.json` 的 `motionScale`。
 
-370 poses are evaluated through official Core: every extreme combination of the five body parameters, each parameter alone, the idle loop at 12 fps, 24 frames of each single motion, and seven exact expression states. Selected poses are rendered by the Java2D diagnostic renderer. Finite vertices, no flipped or degenerate triangles, feet drift below 0.25 px. Drift-only failures shrink all amplitudes 1.0 → 0.66 → 0.33 and retry.
+555 poses are evaluated through official Core: every extreme combination of the five body parameters, each parameter alone, the idle loop at 12 fps, 24 frames of each single motion, seven exact expression states, slow eye/mouth sweeps and mouth-form combinations. Selected poses are rendered by the Java2D diagnostic renderer. Finite vertices, no flipped or degenerate triangles, feet drift below 0.25 px. Drift-only failures shrink all amplitudes 1.0 → 0.66 → 0.33 and retry.
 
 ### 导出模型的视觉修复 / Exported-model visual repairs
 

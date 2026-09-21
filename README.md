@@ -26,7 +26,7 @@ One portrait or one prompt → a first-pass Live2D model that loads in Cubism Co
 | 6 生成表情 | 两次遮罩编辑得到闭眼/张嘴，用 OpenCV **测量**嘴腔、牙、舌、眼皮 | 图像模型 + 本机 |
 | 7 整理精修素材 | 重排顺序、左右拆分、袖手分离、表情配准，写出并回读校验 PSD | 本机 |
 | 8 制作动作 | psd2live 引擎做网格/变形器/物理，加手臂与裙摆变形器和程序化待机循环 | 本机 JVM |
-| 9 检查模型 | 官方 Cubism Core 求值 370 个姿态，渲染表情、极值和连续帧：三角形不翻转、脚底位移 < 0.25 px | 本机 JVM |
+| 9 检查模型 | 官方 Cubism Core 求值 555 个姿态，渲染表情、极值和连续帧：三角形不翻转、脚底位移 < 0.25 px | 本机 JVM |
 
 在此之上还有一个**监督层**：默认 `act` 会检查实际导出模型的表情、身体极值及连续脸部/身体帧，并对照原图检查身份。严重问题按固定菜单修复，最多 **3 轮**；每轮保留独立工程，修坏回退，连续两轮无改善停止。局部图像编辑会调用配置的图像模型并产生费用，整张人物重生成仍由使用者另行发起。视觉检查缺失或严重问题未解决时输出 `needs_review`，保留工程供人工精修，不能发布为可用形象。细节见 [docs/pipeline.md](docs/pipeline.md) 与 [docs/supervisor.md](docs/supervisor.md)。
 
@@ -93,6 +93,10 @@ python scripts/patch_seethrough.py /path/to/see-through
 
 同一输入的重跑可通过 `--reuse-plan`、`--reuse-decomposition`、`--reuse-expressions` 复用检查点，减少重复请求；自动修复仍可能产生新的图像编辑调用。`--supervisor-state work/job-state.json` 让同一任务的重试共用预算；队列适配器自动设置。进度通过 `LIVE2D_PROGRESS_FILE` 对外暴露，`repairing` 表示正在修复并复检。进程成功退出后仍须检查 `build.json.status`，`needs_review` 不代表视觉通过。
 
+### 卡通眼口连续绑定
+
+新制作的卡通人物可在 `.env` 设置 `LIVE2D_CONTINUOUS_EXPRESSIONS=true`，重建连续眼睑、保留唇色和独立牙舌遮挡；默认关闭以保留既有写实素材的绑定方式。需重新生成精修素材和模型，不能只换动作文件。检验目录附慢速眼口 GIF，供查看中间状态。
+
 ### 作为服务
 
 `adapters/anyi/worker.py` 是一个只出站的轮询适配器：向任务队列领取任务、按租约续约、跑 `build`、逐文件带 SHA-256 上传、上报完成或带白名单诊断码的失败。它不需要在制作主机上开任何入站端口。队列一侧的六个 worker 接口写在 [docs/queue-protocol.md](docs/queue-protocol.md) 里，你可以用任何后端实现。服务端需支持新版视觉报告（`schemaVersion: 2`）和 `needs_review`；旧版后端只看结构检查会错误发布，必须配套升级。文件上传超时为 300 秒，提供 [256 MB Nginx location 示例](adapters/anyi/nginx-location.conf)。
@@ -128,7 +132,7 @@ Nine base stages run in order, followed by exported-model visual review and boun
 | 6 Expressions | two masked edits give closed eyes and an open mouth; OpenCV **measures** cavity, teeth, tongue and eyelids | image model + local |
 | 7 Refinement package | reorder, split left/right, separate sleeves from hands, register expressions, write and read back the PSD | local |
 | 8 Rig | psd2live builds meshes / deformers / physics; arm and skirt warps plus a procedural idle loop are added | local JVM |
-| 9 Verify | official Cubism Core evaluates 370 poses and renders expressions, extremes and sequences: no flipped triangles, feet drift < 0.25 px | local JVM |
+| 9 Verify | official Cubism Core evaluates 555 poses and renders expressions, extremes and sequences: no flipped triangles, feet drift < 0.25 px | local JVM |
 
 The **supervisor** defaults to `act`: it checks expressions, body extremes and consecutive face/body frames from the exported model against the original identity. Major defects trigger a fixed repair menu for at most **3 rounds**. Every round is retained; regressions roll back, and two rounds without improvement stop the loop. Local expression edits use your image model and can incur charges. Full-portrait regeneration remains a separate user action. Missing visual evidence or unresolved major defects produce `needs_review`: a retained editing project, not a usable avatar. See [docs/pipeline.md](docs/pipeline.md) and [docs/supervisor.md](docs/supervisor.md).
 
@@ -194,6 +198,10 @@ python scripts/patch_seethrough.py /path/to/see-through
 ```
 
 Use `--reuse-plan`, `--reuse-decomposition` and `--reuse-expressions` for the same input to reduce repeated requests; repairs can still invoke paid image edits. Pass `--supervisor-state work/job-state.json` to share the budget across retries of one job; the queue adapter does this automatically. `LIVE2D_PROGRESS_FILE` exposes progress, including `repairing`. A successful process exit can still mean `needs_review`; read `build.json.status` before publishing.
+
+### Continuous expressions for cartoon art
+
+Set `LIVE2D_CONTINUOUS_EXPRESSIONS=true` for new cartoon builds to rebuild continuous eyelids and neutral-lip geometry with clipped teeth/tongue. It defaults to false for existing textured artwork. Regenerate the refinement material and model; replacing motion files alone is insufficient. Verification includes slow eye/mouth GIFs for inspecting intermediate states.
 
 ### As a service
 

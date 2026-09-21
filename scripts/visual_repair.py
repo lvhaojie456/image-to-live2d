@@ -122,7 +122,8 @@ def evidence_images(candidate, original, regions):
     manifest = json.loads((directory / 'cubism-ready/authoring-manifest.json').read_text())
     with Image.open(verification / 'neutral.png') as image:
         width, height = image.size
-    face = next(layer['bbox'] for layer in manifest['layers'] if layer['name'] == 'face')
+    head_boxes=[layer['bbox'] for layer in manifest['layers'] if layer['name'] in {'face','front hair','back hair','ears-l','ears-r'}]
+    face=[min(b[0] for b in head_boxes),min(b[1] for b in head_boxes),max(b[2] for b in head_boxes),max(b[3] for b in head_boxes)]
     sx, sy = width / manifest['width'], height / manifest['height']
     x1, y1, x2, y2 = face
     pad = max(x2 - x1, y2 - y1) * .2
@@ -156,6 +157,9 @@ def evidence_images(candidate, original, regions):
                 ('exported_body_extremes', sheet(poses, 'poses.png')),
                 ('exported_consecutive_body_frames', sheet([f'frame_{i:03d}' for i in range(16, 24)], 'sequence.png')),
                 ('exported_consecutive_face_frames', sheet([f'frame_{i:03d}' for i in range(16, 24)], 'face-sequence.png', face_box))]
+    if (verification/'eye_sweep_000.png').is_file():
+        evidence += [('slow_eye_transition',sheet([f'eye_sweep_{i:03d}' for i in [0,10,15,20,23,26,28,30]],'eye-sweep.png',face_box)),
+                     ('slow_mouth_transition',sheet([f'mouth_sweep_{i:03d}' for i in [0,5,10,15,20,25,28,30]],'mouth-sweep.png',face_box))]
     moc = directory / 'body-motion/model/MotionCharacter.moc3'
     hashes = {str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest() for _, p in evidence}
     hashes[str(moc.relative_to(directory))] = hashlib.sha256(moc.read_bytes()).hexdigest()
