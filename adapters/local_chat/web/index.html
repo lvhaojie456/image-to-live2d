@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>和小忆聊一会儿</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="companion">
+    <section class="portrait" aria-label="可互动的卡通形象">
+      <div class="portrait-top"><span class="eyebrow">一个属于你的聊天角落</span><span class="ai-label">AI 形象</span></div>
+      <canvas id="avatar" aria-label="拖动视线或点击形象互动"></canvas>
+      <div class="bubble" id="bubble" role="status">正在准备见面…</div>
+      <div class="portrait-bottom"><span id="avatar-status"><i></i> 加载形象</span><button id="zoom" class="ghost" aria-label="切换全身或近景">看全身 ↗</button></div>
+    </section>
+    <section class="chat">
+      <header class="chat-head">
+        <div><div class="eyebrow">LET’S TALK</div><h1>和<span id="name">小忆</span>聊一会儿<span class="dot">。</span></h1><p>说说今天，或只是打个招呼。</p></div>
+        <button id="settings-open" class="icon" aria-label="设置" title="设置">⚙</button>
+      </header>
+      <div class="actions" aria-label="动作互动">
+        <button data-action="wink">眨眨眼</button><button data-action="nod">点个头</button><button data-action="wave">打招呼</button>
+      </div>
+      <div id="messages" class="messages" aria-live="polite" aria-relevant="additions text"></div>
+      <div class="suggestions" id="suggestions"><button>你好，介绍一下自己</button><button>今天有点累</button><button>陪我想个周末计划</button></div>
+      <div class="notice" id="notice" role="status"></div>
+      <form id="composer" class="composer">
+        <label class="sr-only" for="message">发消息</label>
+        <textarea id="message" rows="2" maxlength="1200" placeholder="想说什么都可以…" required></textarea>
+        <div class="composer-bottom"><button type="button" id="microphone" class="mic" aria-label="开始语音输入" hidden>说话</button><button type="button" id="record-cancel" hidden>取消</button><label class="voice"><input id="voice" type="checkbox" checked>语音回复</label><button type="button" id="stop" hidden>停止朗读</button><button type="submit" id="send">发送 <span>↗</span></button></div>
+      </form>
+      <footer>移动鼠标，他会看向你。点击形象，也会有回应。<br>聊天记录保存在本机，回复由 AI 生成。</footer>
+    </section>
+  </main>
+  <dialog id="settings">
+    <form id="profile">
+      <div class="dialog-head"><h2>让他更像你的伙伴</h2><button type="button" id="settings-close" class="icon" aria-label="关闭设置">×</button></div>
+      <label>给他起个名字<input id="profile-name" maxlength="20" required value="小忆"></label>
+      <p id="privacy">聊天内容会发给已配置的模型服务生成回复；记录和语音文件保存在这台电脑。没有克隆照片人物的声音。</p>
+      <button id="save-name" type="submit">保存名字</button>
+    </form>
+    <details><summary>清空本机聊天记录</summary><p>清空后，下一次对话会重新开始。</p><button id="clear" class="danger">清空记录和语音</button></details>
+  </dialog>
+  <dialog id="mic-consent">
+    <h2>用声音和他聊天</h2><p>录音会发送至腾讯云语音识别并转成文字。本机不保存原始录音；文字先填入输入框，确认后再发送。单次最多 60 秒，可随时取消。</p>
+    <div class="consent-actions"><button id="mic-decline">暂不开启</button><button id="mic-accept">同意并开启麦克风</button></div>
+  </dialog>
+  <script src="/runtime/live2dcubismcore.min.js"></script>
+  <script src="/runtime/pixi.min.js"></script>
+  <script src="/runtime/cubism4.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
