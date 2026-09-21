@@ -93,6 +93,10 @@ python scripts/patch_seethrough.py /path/to/see-through
 
 同一输入的重跑可通过 `--reuse-plan`、`--reuse-decomposition`、`--reuse-expressions` 复用检查点，减少重复请求；自动修复仍可能产生新的图像编辑调用。`--supervisor-state work/job-state.json` 让同一任务的重试共用预算；队列适配器自动设置。进度通过 `LIVE2D_PROGRESS_FILE` 对外暴露，`repairing` 表示正在修复并复检。进程成功退出后仍须检查 `build.json.status`，`needs_review` 不代表视觉通过。
 
+### 和生成的形象互动
+
+新增 [本机互动伙伴](docs/local-chat.md)：把导出的模型接成文字/麦克风语音聊天、中文男声回复、真实音频口型、视线跟随、分区触摸、连续摸头、拉手回弹和拖放道具。以大幅角色场景为主，聊天侧栏可收起；触摸事件可带入下一轮对话，支持改名、重播、停止朗读及清空本机历史。启动方式见文档，浏览器不接触 API 密钥。
+
 ### 作为服务
 
 `adapters/anyi/worker.py` 是一个只出站的轮询适配器：向任务队列领取任务、按租约续约、跑 `build`、逐文件带 SHA-256 上传、上报完成或带白名单诊断码的失败。它不需要在制作主机上开任何入站端口。队列一侧的六个 worker 接口写在 [docs/queue-protocol.md](docs/queue-protocol.md) 里，你可以用任何后端实现。服务端需支持新版视觉报告（`schemaVersion: 2`）和 `needs_review`；旧版后端只看结构检查会错误发布，必须配套升级。文件上传超时为 300 秒，提供 [256 MB Nginx location 示例](adapters/anyi/nginx-location.conf)。
@@ -194,6 +198,10 @@ python scripts/patch_seethrough.py /path/to/see-through
 ```
 
 Use `--reuse-plan`, `--reuse-decomposition` and `--reuse-expressions` for the same input to reduce repeated requests; repairs can still invoke paid image edits. Pass `--supervisor-state work/job-state.json` to share the budget across retries of one job; the queue adapter does this automatically. `LIVE2D_PROGRESS_FILE` exposes progress, including `repairing`. A successful process exit can still mean `needs_review`; read `build.json.status` before publishing.
+
+### Interact with your character
+
+The [local chat adapter](docs/local-chat.md) adds streamed text chat, microphone transcription, Chinese speech replies, audio-driven lips, gaze tracking and click reactions to an exported model. It supports rename, replay, stop and clearing local history. API keys stay server-side; see the guide for startup and platform requirements.
 
 ### As a service
 
