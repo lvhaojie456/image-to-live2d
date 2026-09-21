@@ -2,7 +2,7 @@
 import argparse,hashlib,json,math,os,shutil,subprocess,sys
 from argparse import Namespace
 from pathlib import Path
-from PIL import Image,ImageDraw
+from PIL import Image,ImageDraw,ImageOps
 from psd_tools import PSDImage
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
@@ -33,24 +33,34 @@ def face_crop(im,f,p=.45):
  x,y,w,h=f;s=round(max(w,h)*(1+2*p));cx,cy=x+w/2,y+h/2;L,T=round(cx-s/2),round(cy-s/2);o=Image.new("RGB",(s,s),"white");x1,y1=max(0,L),max(0,T);x2,y2=min(im.width,L+s),min(im.height,T+s)
  if x2>x1 and y2>y1:o.paste(im.convert("RGB").crop((x1,y1,x2,y2)),(x1-L,y1-T))
  return o,(L,T,s,s)
-def edit_face(api,model,crop,origin,rs,out,kind,strict=False):
+def edit_face(api,model,crop,origin,rs,out,kind,strict=False,feedback=''):
  _,_,s,_=origin; keys=("mouth",) if kind=="mouth" else ("left_eye","right_eye");m=Image.new("RGBA",crop.size,(255,255,255,255));d=ImageDraw.Draw(m)
  for key in keys:
   x,y,w,h=rs[key];d.rectangle((max(0,round(x-origin[0]-w*.35)),max(0,round(y-origin[1]-h*.45)),min(s,round(x-origin[0]+w*1.35)),min(s,round(y-origin[1]+h*1.45))),fill=(0,0,0,0))
  ip=out/f"face_input_{kind}.png";mp=out/f"face_mask_{kind}.png";crop.save(ip);m.save(mp)
  prompt="Edit only the transparent mask. Preserve the reference's exact age, identity, realism or drawing style, facial hair, skin texture, wrinkles, eyebrows, lighting and every unmasked pixel. "+("Close both eyes naturally. Keep existing eyebrows and wrinkles. Do not add long eyelashes or makeup." if kind=="eyes" else "Open the mouth naturally for speech, with a dark cavity, lips, subtle tongue and small visible upper teeth. Keep the moustache and beard. Do not change the art style or draw a rectangular boundary.")
  if strict: prompt+=" The previous attempt was rejected: "+("the eyes were not fully closed; both eyelids must be completely shut with no visible iris or sclera." if kind=="eyes" else "the mouth was not clearly open; show a clearly open mouth with a dark cavity and visible upper teeth.")
+ if feedback: prompt+=' Fix these observed defects in this local region: '+feedback[:800]
  with ip.open("rb") as i,mp.open("rb") as mask:
   r=api.images.edit(model=model,image=i,mask=mask,prompt=prompt,background="opaque",input_fidelity="high",quality="high",output_format="png",response_format="b64_json",size="1024x1024")
- p=out/f"expression_{kind}.png";save_image_response(r,p);return p
-def make_recipe(source,decomp,rs,eyes,mouth,out):
+ p=out/f"expression_{kind}.png";save_image_response(r,p)
+ # Providers can modify unmasked pixels. Restore them from the original face so
+ # retries cannot gradually change the identity, beard, lighting or other eye.
+ with Image.open(p) as generated:
+  generated=generated.convert('RGB')
+  original=crop.resize(generated.size,Image.Resampling.LANCZOS).convert('RGB')
+  editable=ImageOps.invert(m.getchannel('A')).resize(generated.size,Image.Resampling.LANCZOS)
+  Image.composite(generated,original,editable).save(p)
+ return p
+def make_recipe(source,decomp,rs,eyes,mouth,out,repair_level=0):
  psd=PSDImage.open(decomp)
  with Image.open(source) as source_image:
   source_image=source_image.convert("RGB")
   rw,rh=source_image.size
   _,crop=face_crop(source_image,rs["face"])
  mw,mh=psd.size
- ew,eh=Image.open(eyes).size;ow,oh=Image.open(mouth).size
+ with Image.open(eyes) as image: ew,eh=image.size
+ with Image.open(mouth) as image: ow,oh=image.size
  def rel(b,sw,sh):
   x,y,w,h=b;return [round((x-crop[0])*sw/crop[2]),round((y-crop[1])*sh/crop[3]),round(w*sw/crop[2]),round(h*sh/crop[3])]
  le,re,mo=rel(rs["left_eye"],ew,eh),rel(rs["right_eye"],ew,eh),rel(rs["mouth"],ow,oh)
@@ -72,13 +82,17 @@ def make_recipe(source,decomp,rs,eyes,mouth,out):
   hands['handwear-l']=[[mw//2,y+round((B-y)*.78)],[R,free]]
   hands['handwear-r']=[[x,cuff],[mw//2,free]]
  recipe={"schema_version":1,"reference_sha256":sha(source),"source_psd_sha256":sha(decomp),"edit_sha256":{"mouth":sha(mouth),"eyes":sha(eyes)},"reference_size":[rw,rh],"model_canvas":[mw,mh],"edit_size":[ew,eh],"edit_crop":list(crop),"closed_eyes":{"eye_close-r":{"rect":[le[0],le[1],le[0]+le[2],le[1]+le[3]],"thresholds":{"dark":100,"light":155}},"eye_close-l":{"rect":[re[0],re[1],re[0]+re[2],re[1]+re[3]],"thresholds":{"dark":100,"light":155}}},"body_splits":body,"hand_splits":hands,"manual_targets":{"ParamArmL":["arm-l","hand-l"],"ParamArmR":["arm-r","hand-r"],"ParamSkirtSwing":["bottomwear"],"ParamBodyAngleX":["topwear","bottomwear","neck"],"ParamLegL":["legwear-l","footwear-l"],"ParamLegR":["legwear-r","footwear-r"]}}
+ recipe['edit_sizes']={'eyes':[ew,eh],'mouth':[ow,oh]}
  # Detect actual mouth pixels. Coarse rectangles must never become visible skin blocks.
  recipe['mouth']=measure_mouth(mouth,mo)
  for suffix in ('r','l'):
-  eye=next((l for l in leaves if l.name=='eyelash-'+suffix),None)
-  if eye is not None:
-   recipe['closed_eyes']['eye_close-'+suffix]={'rect':eye_patch_rect(
-       eye.bbox,[rw,rh],crop,[ew,eh],[mw,mh]),'method':'texture_patch','feather':5}
+  parts=[l for l in leaves if l.name in {'eyelash-'+suffix,'eyewhite-'+suffix,'irides-'+suffix}]
+  if parts:
+   bounds=[min(l.bbox[0] for l in parts),min(l.bbox[1] for l in parts),max(l.bbox[2] for l in parts),max(l.bbox[3] for l in parts)]
+   rect=eye_patch_rect(bounds,[rw,rh],crop,[ew,eh],[mw,mh])
+   padding=repair_level*2
+   rect=[max(0,rect[0]-padding),max(0,rect[1]-padding),min(ew,rect[2]+padding),min(eh,rect[3]+padding)]
+   recipe['closed_eyes']['eye_close-'+suffix]={'rect':rect,'method':'texture_patch','feather':5+repair_level}
  # Missing semantic mouth layers are common for moustaches. Keep textured faces
  # intact and isolate the neutral mouth from the source pixels in the package.
  recipe['face_repair']={'mode':'preserve_texture','layer':'face'}
@@ -92,7 +106,7 @@ def make_recipe(source,decomp,rs,eyes,mouth,out):
       round((max(ys)*crop[3]/oh+crop[1]+py)*mh/side)+3]
  path=out/"character-refinement-recipe.json";path.write_text(json.dumps(recipe,ensure_ascii=False,indent=2));return path
 
-def motion_recipe(package,scale=1.0):
+def motion_recipe(package,scale=1.0,repair_rig=False):
  """Procedural motion recipe. `scale` shrinks every amplitude together (lean, breath, arms, garment);
  the verifier's feet and triangle checks decide whether a smaller scale is needed."""
  if not 0.1<=scale<=1.0: raise ValueError('Motion scale must be within 0.1..1')
@@ -117,11 +131,21 @@ def motion_recipe(package,scale=1.0):
  lean_pin_y=min(manifest["height"]-40,max(skirt["y1"]+1,lean_pin_y))
  def arm(side):
   b=bbox("arm-"+side)
-  return {"pivot":[round((b["x1"]+b["x2"])/2),round(b["y1"]+10)],"pin_y":b["y1"]+5,"free_y":max(b["y1"]+10,b["y2"]-20),"degrees":round(3.0*scale,3)}
+  pivot_x=(b['x1']+b['x2'])/2
+  pin_y=b['y1']+5
+  if repair_rig:
+   import numpy as np
+   with Image.open(package/names['arm-'+side]['path']) as image:
+    alpha=np.array(image.getchannel('A'))
+   upper=alpha[b['y1']:b['y1']+max(1,round(b['height']*.18)),:]
+   _,xs=np.nonzero(upper>128)
+   if len(xs): pivot_x=float(xs.mean())
+   pin_y=b['y1']+round(b['height']*.18)
+  return {"pivot":[round(pivot_x),round(b["y1"]+10)],"pin_y":pin_y,"free_y":max(pin_y+5,b["y2"]-20),"degrees":round(3.0*scale,3)}
  return {"schema_version":1,"motion_scale":scale,"model_canvas":[manifest["width"],manifest["height"]],"body":{"pivot":[round(center),hip_y],"lean_degrees":round(3.0*scale,3),"lean_full_y":lean_full_y,"lean_pin_y":lean_pin_y,"breath_lift_px":round(4.0*scale,3),"chest_expansion":round(.009*scale,5),"chest_y":round(top["y1"]+top["height"]*.38),"chest_radius":max(40,round(top["height"]*.38)),"shoulder_y":top["y1"],"breath_pin_y":top["y2"]},"arms":{"l":arm("l"),"r":arm("r")},"skirt":{"target_layers":[garment_name],"display_name":"裙摆晃动" if garment_name=='bottomwear' else '衣摆轻摆',"pin_y":skirt["y1"]+10 if garment_name=='bottomwear' else round(top['y1']+top['height']*.65),"hem_y":skirt["y2"],"sway_px":round((10 if garment_name=='bottomwear' else 4)*scale,3),"hem_lift_px":round((2 if garment_name=='bottomwear' else 1)*scale,3),"half_width":max(20,round(skirt["width"]/2))},"loop_seconds":8,"fps":30}
 
-def write_report(workspace,args,stages):
- data={"pipeline":"prompt_or_image_to_cubism","status":"complete","input_mode":"prompt" if args.prompt else "image","requested_prompt":args.prompt,"stages":stages,"output":str(workspace),"limitations":["Cubism 5.3 still needs artist review of keyforms and physics.","A single image cannot reveal all hidden side/back pixels."]}
+def write_report(workspace,args,stages,status='complete'):
+ data={"pipeline":"prompt_or_image_to_cubism","status":status,"input_mode":"prompt" if args.prompt else "image","requested_prompt":args.prompt,"stages":stages,"output":str(workspace),"limitations":["Cubism 5.3 still needs artist review of keyforms and physics.","A single image cannot reveal all hidden side/back pixels."]}
  (workspace/"build.json").write_text(json.dumps(data,ensure_ascii=False,indent=2))
  (workspace/"BUILD.md").write_text("# 图生 Live2D 完整构建结果\n\n本目录由 python live2d_pipeline.py build 生成，包含原图、拆层规划、See-through 分层 PSD、表情素材、Cubism 精修 PSD、程序化身体动作模型和验证报告。\n\nbody-motion/model/MotionCharacter.cmo3 是可在 Cubism 5.3 中继续编辑的工程起点；model3.json 已包含 BodyIdle、Breathing、BodyLean、Arms 和 Skirt 动作。\n\n自动阶段已经完成：输入、生图、规划、拆层、透明层整理、表情素材、身体动作关键形、motion3 曲线、官方 Core 结构检查和动作采样。手工阶段包括连续表情关键形、隐藏区域绘画、手臂/裙摆极值修形、头发与裙摆物理的最终手感，以及 VTube Studio 面捕验收。\n",encoding="utf-8")
 
@@ -141,6 +165,123 @@ def verification_failure(motion):
  return metrics
 
 MOTION_SCALES=(1.0,0.66,0.33)
+
+def author_candidate(candidate,source,supervisor,stage):
+ """Build a separate, reversible candidate and require the existing structural checks."""
+ out=candidate['directory'];out.mkdir(parents=True,exist_ok=True)
+ rs=candidate['regions'];mouth=candidate['mouth'];eyes=candidate['eyes']
+ stage('refining',70)
+ try:
+  recipe=make_recipe(source,candidate['decomposition'],rs,eyes,mouth,out,candidate.get('eye_repair',0))
+ except ValueError as error:
+  if 'search boundary' not in str(error) and 'mouth' not in str(error).lower(): raise
+  with Image.open(mouth) as image: edit=image.convert('RGB')
+  located=supervisor.locate_mouth(edit)
+  if not located: raise
+  with Image.open(source) as image: _,crop_box=face_crop(image.convert('RGB'),rs['face'])
+  rs=dict(rs,mouth=[round(located[0]*crop_box[2]/edit.width+crop_box[0]),
+                   round(located[1]*crop_box[3]/edit.height+crop_box[1]),
+                   round(located[2]*crop_box[2]/edit.width),round(located[3]*crop_box[3]/edit.height)])
+  candidate['regions']=rs
+  recipe=make_recipe(source,candidate['decomposition'],rs,eyes,mouth,out,candidate.get('eye_repair',0))
+ build_face_assets(source,mouth,eyes,recipe,out/'face-assets')
+ refinement=out/'cubism-ready';build_refinement(candidate['decomposition'],out/'face-assets',recipe,refinement)
+ java=Path(os.environ.get('LIVE2D_JAVA_HOME',ROOT/'work/jdk-21.0.12.1+1/Contents/Home'))
+ kit=Path(os.environ.get('LIVE2D_KIT_DIR',ROOT/'work/third_party/live2d-agent-kit'))
+ engine=Path(os.environ.get('LIVE2D_ENGINE_DIR',ROOT/'work/third_party/psd2live'))
+ core=Path(os.environ.get('CUBISM_CORE_DIR','/Applications/Live2D Cubism 5.3/res'))
+ motion=out/'body-motion';attempts=[]
+ maximum=candidate.get('motion_scale',1.0)
+ scales=[s for s in MOTION_SCALES if s<=maximum]
+ for index,scale in enumerate(scales):
+  stage('rigging',80)
+  mr=out/'body-motion-recipe.json'
+  mr.write_text(json.dumps(motion_recipe(refinement,scale,candidate.get('repair_rig',False)),ensure_ascii=False,indent=2))
+  build_body_motion(refinement,motion,mr,kit,engine,java,core)
+  stage('verifying',90)
+  try:
+   subprocess.run([sys.executable,str(ROOT/'scripts/verify_body_motion.py'),'--output',str(motion),'--java-home',str(java),'--kit',str(kit),'--core',str(core)],check=True)
+   attempts.append(dict(scale=scale,passed=True));break
+  except subprocess.CalledProcessError:
+   metrics=verification_failure(motion);attempts.append(dict(scale=scale,passed=False,metrics=metrics))
+   if not (metrics and metrics['tunable'] and index+1<len(scales) and supervisor.consume('tune_motion',f'scale {scale}')): raise
+   motion.rename(out/f'body-motion.failed-scale{int(scale*100):03d}')
+ candidate['motion_scale']=attempts[-1]['scale']
+ candidate['motion_attempts']=attempts
+ return candidate
+
+def finish_visual_repair(workspace,source,decomposition,rs,eyes,mouth,supervisor,stage,get_api,args,stages):
+ from visual_repair import repair_loop,evidence_images
+ from foreground import clip_background
+ rounds=workspace/'visual-rounds';rounds.mkdir()
+ initial={'directory':rounds/'round-00','decomposition':decomposition,'regions':rs,'eyes':eyes,'mouth':mouth}
+ author_candidate(initial,source,supervisor,stage)
+ def review(candidate,number):
+  stage('verifying',92)
+  return supervisor.review_model(evidence_images(candidate,source,candidate['regions']),number)
+ def repair(best,judgment,actions,number):
+  stage('repairing',93)
+  candidate=dict(best,directory=rounds/f'round-{number:02d}',regions=dict(best['regions']))
+  out=candidate['directory'];out.mkdir()
+  (out/'expressions').mkdir()
+  for kind in ('eyes','mouth'):
+   target=out/'expressions'/f'expression_{kind}.png';shutil.copy2(best[kind],target);candidate[kind]=target
+  details='; '.join(i['detail'] for i in judgment['issues'] if i['severity']!='minor')
+  if 'identity' in actions:
+   parts={i['part'] for i in judgment['issues'] if i['code']=='identity_drift'}
+   actions=sorted(set(actions)|({'eyes','mouth'} if not parts or not parts<={'eyes','mouth'} else parts))
+  if set(actions)&{'eyes','mouth'}:
+   gate=supervisor.review_regions(source,candidate['regions'])
+   if gate:
+    for key,value in gate['regions'].items():
+     if (key in ('left_eye','right_eye') and 'eyes' in actions) or (key=='mouth' and 'mouth' in actions):
+      candidate['regions'][key]=value
+   with Image.open(source) as image:crop,crop_box=face_crop(image.convert('RGB'),candidate['regions']['face'])
+   for kind in ('eyes','mouth'):
+    if kind in actions:
+     candidate[kind]=edit_face(get_api(),image_model(),crop,crop_box,
+                              candidate['regions'],out/'expressions',kind,strict=True,feedback=details)
+   if 'eyes' in actions:candidate['eye_repair']=min(3,best.get('eye_repair',0)+1)
+  if 'layers' in actions:
+   stage('repairing',93)
+   destination=out/'decomposition'
+   remote_decompose(Namespace(image=str(source),output=str(destination),group_offload=args.group_offload,resolution=args.resolution,new_run=True))
+   psd=next(p for p in sorted(destination.glob('*.psd')) if 'depth' not in p.name)
+   check=clip_background(psd,destination/'input_clipped.psd',mask_path=workspace/'foreground/input_mask.png',report_dir=out/'foreground')
+   candidate['decomposition']=destination/'input_clipped.psd' if check['leaking'] else psd
+  if 'rig' in actions:
+   candidate['repair_rig']=True
+   # Pin the shoulder using actual alpha pixels before reducing movement. Never
+   # drive amplitudes to zero; the next model review checks that motion remains visible.
+   if any(i['code']=='joint_gap' for i in judgment['issues']):candidate['motion_scale']=min(best['motion_scale'],.66)
+   if not judgment['motionAdequate']:candidate['motion_scale']=1.0
+  return author_candidate(candidate,source,supervisor,lambda name,value:stage('repairing',93))
+ selected,result=repair_loop(initial,review,repair,supervisor,workspace/'visual-repair.json')
+ for folder in ('face-assets','cubism-ready','body-motion','visual-evidence'):
+  shutil.copytree(selected['directory']/folder,workspace/folder)
+ for filename in ('character-refinement-recipe.json','body-motion-recipe.json'):
+  shutil.copy2(selected['directory']/filename,workspace/filename)
+ for kind in ('eyes','mouth'):
+  target=workspace/'expressions'/f'expression_{kind}.png'
+  if selected[kind].resolve()!=target.resolve():shutil.copy2(selected[kind],target)
+ plan_path=workspace/'layer_plan.json'
+ selected_plan=json.loads(plan_path.read_text());selected_plan['regions']=selected['regions']
+ plan_path.write_text(json.dumps(selected_plan,ensure_ascii=False,indent=2))
+ stages['expression_assets']['selected_round']=selected['directory'].name
+ stages['visual_review']=result['review']
+ stages['visual_repair']={k:v for k,v in result.items() if k not in ('review','rounds')}
+ stages['body_motion']=dict(path='body-motion',verification='passed',attempts=selected['motion_attempts'],motion_scale=selected['motion_scale'])
+ stages['cubism_refinement']=dict(path='cubism-ready')
+ issues=(result['review'] or {}).get('issues',[])
+ summary='；'.join(i['detail'] for i in issues if i['severity']!='minor')
+ if not result['passed']:
+  summary='需要人工处理：'+(summary or '视觉检查未能确认通过，请检查工程中的表情与动作。')
+ lines=['# 模型视觉检查','',('通过初版检查；仍可人工精修。' if result['passed'] else summary),'']
+ lines += ['- '+i['severity']+'：'+i['detail'] for i in issues]
+ lines += ['', '修复轮次与选择记录见 visual-repair.json；每轮完整模型保留在制作端。']
+ (workspace/'REVIEW.md').write_text('\n'.join(lines),encoding='utf-8')
+ stages['review_summary']=summary[:200]
+ return 'complete' if result['passed'] else 'needs_review'
 
 def run(args):
  load_env()
@@ -216,10 +357,15 @@ def run(args):
   layer_plan=json.loads((workspace/"layer_plan.json").read_text())
   with Image.open(input_white) as input_image:
    input_rgb=input_image.convert("RGB")
-  gate=supervisor.review_regions(input_white,regions(layer_plan,input_rgb,None))
+  planned_regions=regions(layer_plan,input_rgb,None)
+  gate=supervisor.review_regions(input_white,planned_regions)
   if gate:
    stages["astra_plan"]["gate"]=gate
    if gate['regions'] and supervisor.mode=='act':
+    if gate['regions'].get('face',planned_regions['face'])!=planned_regions['face']:
+     # Old edits are registered to their original crop. A changed face crop
+     # requires fresh expressions, not a misregistered checkpoint.
+     args.reuse_expressions=None
     layer_plan.setdefault("regions",{}).update(gate['regions'])
     layer_plan["regions_corrected_by"]="supervisor"
     (workspace/"layer_plan.json").write_text(json.dumps(layer_plan,ensure_ascii=False,indent=2))
@@ -288,63 +434,9 @@ def run(args):
    gate=supervisor.review_expressions(crop,eyes,mouth)
    if gate:
     stages["expression_assets"]["gate"]=gate
-    if not gate['ok'] and supervisor.mode=='act' and supervisor.consume('redo_expressions','gate rejected'):
-     redo=workspace/"expressions.rejected"
-     expr.rename(redo);expr.mkdir()
-     eyes=edit_face(get_api(),model,crop,crop_box,rs,expr,"eyes",strict=True)
-     mouth=edit_face(get_api(),model,crop,crop_box,rs,expr,"mouth",strict=True)
-     stages["expression_assets"].update(redone=True,eyes=str(eyes.relative_to(workspace)),mouth=str(mouth.relative_to(workspace)))
-     second=supervisor.review_expressions(crop,eyes,mouth)
-     if second: stages["expression_assets"]["gate_after_redo"]=second
-
-  stage('refining',70)
-  try:
-   recipe=make_recipe(input_white,decomposition,rs,eyes,mouth,workspace)
-  except ValueError as error:
-   if 'search boundary' not in str(error) and 'mouth' not in str(error).lower(): raise
-   located=supervisor.locate_mouth(Image.open(mouth).convert('RGB'))
-   if not located: raise
-   located_input=[round(located[0]*crop_box[2]/Image.open(mouth).width+crop_box[0]),round(located[1]*crop_box[3]/Image.open(mouth).height+crop_box[1]),
-                  round(located[2]*crop_box[2]/Image.open(mouth).width),round(located[3]*crop_box[3]/Image.open(mouth).height)]
-   rs=dict(rs,mouth=located_input)
-   stages["mouth_relocated"]=dict(by="supervisor",mouth=located_input)
-   recipe=make_recipe(input_white,decomposition,rs,eyes,mouth,workspace)
-  stages["expression_assets"].update(recipe=str(recipe.relative_to(workspace)))
-  assets=workspace/"face-assets"
-  build_face_assets(input_white,mouth,eyes,recipe,assets)
-  refinement=workspace/"cubism-ready"
-  build_refinement(decomposition,assets,recipe,refinement)
-  stages["cubism_refinement"]=dict(path=str(refinement.relative_to(workspace)))
-  java=Path(os.environ.get("LIVE2D_JAVA_HOME",ROOT/"work/jdk-21.0.12.1+1/Contents/Home"))
-  kit=Path(os.environ.get('LIVE2D_KIT_DIR',ROOT/'work/third_party/live2d-agent-kit'))
-  engine=Path(os.environ.get('LIVE2D_ENGINE_DIR',ROOT/'work/third_party/psd2live'))
-  core=Path(os.environ.get('CUBISM_CORE_DIR','/Applications/Live2D Cubism 5.3/res'))
-  motion=workspace/"body-motion"
-  attempts=[]
-  for index,scale in enumerate(MOTION_SCALES):
-   stage('rigging',80)
-   mr=workspace/"body-motion-recipe.json"
-   mr.write_text(json.dumps(motion_recipe(refinement,scale),ensure_ascii=False,indent=2))
-   build_body_motion(refinement,motion,mr,kit,engine,java,core)
-   stage('verifying',90)
-   try:
-    subprocess.run([sys.executable,str(ROOT/"scripts/verify_body_motion.py"),"--output",str(motion),"--java-home",str(java),'--kit',str(kit),'--core',str(core)],check=True)
-    attempts.append(dict(scale=scale,passed=True))
-    break
-   except subprocess.CalledProcessError as error:
-    metrics=verification_failure(motion)
-    attempts.append(dict(scale=scale,passed=False,metrics=metrics))
-    next_scale=MOTION_SCALES[index+1] if index+1<len(MOTION_SCALES) else None
-    if not (metrics and metrics['tunable'] and next_scale is not None and supervisor.consume('tune_motion',f'scale {scale} -> {next_scale}')):
-     raise
-    motion.rename(workspace/f"body-motion.failed-scale{int(scale*100):03d}")
-    print(f'动作检查未通过（脚底位移 {metrics["feetMaxDisplacementPixels"]} px，翻转 {metrics["trianglesFlipped"]}），幅度降到 {next_scale} 重新绑定',flush=True)
-  stages["body_motion"]=dict(path=str(motion.relative_to(workspace)),verification="passed",attempts=attempts,motion_scale=attempts[-1]['scale'])
-  sheets=[('expressions',refinement/'expressions-review.png'),('poses',motion/'verification/body-poses.jpg')]
-  review=supervisor.visual_review([(label,path) for label,path in sheets if path.is_file()])
-  if review: stages["visual_review"]=review
-  write_report(workspace,args,stages)
-  print("完整项目已生成："+str(workspace),flush=True)
+  status=finish_visual_repair(workspace,input_white,decomposition,rs,eyes,mouth,supervisor,stage,get_api,args,stages)
+  write_report(workspace,args,stages,status)
+  print(("初版已通过检查：" if status=="complete" else "需要人工处理，工程已保留：")+str(workspace),flush=True)
   return workspace
  except BaseException as error:
   if isinstance(error,KeyboardInterrupt): raise

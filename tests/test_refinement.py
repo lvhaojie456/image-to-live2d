@@ -1,4 +1,5 @@
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,11 +10,32 @@ from psd_tools import PSDImage
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
-from face_assets import register_edit, ink_layer
+from face_assets import register_edit, ink_layer, build_face_assets
 from build_refinement_package import partition, write_psd
 
 
 class RefinementTests(unittest.TestCase):
+    def test_partial_expression_repair_can_return_a_different_image_resolution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            Image.new('RGBA',(32,32),(160,110,90,255)).save(root/'base.png')
+            Image.new('RGBA',(32,32),(160,110,90,255)).save(root/'eyes.png')
+            Image.new('RGBA',(64,64),(80,30,30,255)).save(root/'mouth.png')
+            recipe={'reference_size':[32,32],'model_canvas':[32,32],'edit_size':[32,32],
+                    'edit_sizes':{'eyes':[32,32],'mouth':[64,64]},'edit_crop':[0,0,32,32],
+                    'closed_eyes':{'eye_close-l':{'rect':[4,4,14,10],'method':'texture_patch','feather':1}},
+                    'mouth':{'outline':[[16,24],[48,24],[48,52],[16,52]],
+                             'teeth':[[22,26],[42,26],[42,32],[22,32]],
+                             'tongue':[[22,40],[42,40],[42,48],[22,48]],
+                             'cavity_sample':[20,36],'lip_split_y':32}}
+            (root/'recipe.json').write_text(json.dumps(recipe))
+            build_face_assets(root/'base.png',root/'mouth.png',root/'eyes.png',root/'recipe.json',root/'out')
+            report=json.loads((root/'out/face-assets.json').read_text())
+            for feature in report['features']:
+                with Image.open(root/'out'/feature['path']) as image:
+                    self.assertEqual(image.size,(32,32))
+                    self.assertIsNotNone(image.getchannel('A').getbbox())
+
     def test_crop_registration_preserves_feature_position(self):
         image=Image.new('RGBA',(20,20))
         ImageDraw.Draw(image).rectangle((4,6,9,11),fill=(0,0,0,255))

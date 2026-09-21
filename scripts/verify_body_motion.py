@@ -49,6 +49,13 @@ def run(output, kit, java_home, core):
     for k in BODY_PARAMETERS:
         for sign in ([-1,1] if k!='ParamBreath' else [1]):
             row(k+('_min' if sign<0 else '_max'),{k:sign*(10 if k=='ParamBodyAngleZ' else 1)})
+    for name, values in {
+        'eyes_closed': {'ParamEyeLOpen': 0, 'ParamEyeROpen': 0},
+        'left_closed': {'ParamEyeLOpen': 0}, 'right_closed': {'ParamEyeROpen': 0},
+        'mouth_half': {'ParamMouthOpenY': .5}, 'mouth_open': {'ParamMouthOpenY': 1},
+        'mouth_smile': {'ParamMouthOpenY': 1, 'ParamMouthForm': 1},
+        'closed_open': {'ParamEyeLOpen': 0, 'ParamEyeROpen': 0, 'ParamMouthOpenY': 1},
+    }.items(): row(name, values)
     fps=12;frames=round(duration*fps)
     for i in range(frames):
         row('frame_%03d'%i,sample_motion(motion,i/fps))

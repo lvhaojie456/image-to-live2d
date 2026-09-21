@@ -185,7 +185,7 @@ def plan(args) -> None:
         "你是 Live2D 制作总监。分析这张角色图，输出严格 JSON，不要 Markdown。"
         "目标是交给 See-through 拆层和 Live2D Cubism Editor 5.3 使用。"
         "按变形行为而不是只按语义拆分；指出被遮挡区域需要补画的位置。"
-        "regions 中的坐标必须是输入图像像素坐标，原点左上，字段是 x,y,width,height；"
+        "left_eye 指画面左眼，right_eye 指画面右眼。regions 中的坐标必须是输入图像像素坐标，原点左上，字段是 x,y,width,height；"
         "无法可靠定位时填 null，不要猜超出图像范围的坐标。"
         f"JSON 结构如下：{json.dumps(schema, ensure_ascii=False)}"
     )

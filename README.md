@@ -14,7 +14,7 @@ One portrait or one prompt → a first-pass Live2D model that loads in Cubism Co
 
 这是一条把单张角色图变成 Live2D 模型的自动化流水线。它不是 Cubism Editor 的替代品：产出的是**待精修的初版**，每个模型都附带分层 PSD、`.cmo3` 工程和验证报告，让美术从一个已经能动的起点开始，而不是从零开始拆层。
 
-九个阶段，全部由代码串起来，任一阶段失败都有确定性的恢复动作：
+九个基础阶段由代码串联，可恢复的错误先按规则处理，导出后再做视觉验收与有次数上限的修复：
 
 | 阶段 | 做什么 | 在哪里算 |
 | --- | --- | --- |
@@ -26,9 +26,9 @@ One portrait or one prompt → a first-pass Live2D model that loads in Cubism Co
 | 6 生成表情 | 两次遮罩编辑得到闭眼/张嘴，用 OpenCV **测量**嘴腔、牙、舌、眼皮 | 图像模型 + 本机 |
 | 7 整理精修素材 | 重排顺序、左右拆分、袖手分离、表情配准，写出并回读校验 PSD | 本机 |
 | 8 制作动作 | psd2live 引擎做网格/变形器/物理，加手臂与裙摆变形器和程序化待机循环 | 本机 JVM |
-| 9 检查模型 | 官方 Cubism Core 渲染 363 个姿态：三角形不翻转、脚底位移 < 0.25 px | 本机 JVM |
+| 9 检查模型 | 官方 Cubism Core 求值 370 个姿态，渲染表情、极值和连续帧：三角形不翻转、脚底位移 < 0.25 px | 本机 JVM |
 
-在此之上还有一个**监督层**：一个视觉模型在规划、拆层、表情三个关卡各看一次缩略图，最后给初版打分；失败时从固定菜单里选下一步（重规划、裁背景、缩小动作幅度、重做表情），每单有预算，付费动作永远只变成建议。默认 `shadow` 模式只记录不干预。细节见 [docs/pipeline.md](docs/pipeline.md) 与 [docs/supervisor.md](docs/supervisor.md)。
+在此之上还有一个**监督层**：默认 `act` 会检查实际导出模型的表情、身体极值及连续脸部/身体帧，并对照原图检查身份。严重问题按固定菜单修复，最多 **3 轮**；每轮保留独立工程，修坏回退，连续两轮无改善停止。局部图像编辑会调用配置的图像模型并产生费用，整张人物重生成仍由使用者另行发起。视觉检查缺失或严重问题未解决时输出 `needs_review`，保留工程供人工精修，不能发布为可用形象。细节见 [docs/pipeline.md](docs/pipeline.md) 与 [docs/supervisor.md](docs/supervisor.md)。
 
 ### 产物
 
@@ -36,9 +36,11 @@ One portrait or one prompt → a first-pass Live2D model that loads in Cubism Co
 
 - `body-motion/model/` — `.moc3`、一张 4096 纹理图集、`physics3`、`cdi3`、待机/呼吸/倾斜/手臂/裙摆/表情六组 `motion3`、`.cmo3` 工程。
 - `cubism-ready/` — 分组好的 `cubism_refinement.psd`（33 层左右）、`expression_parts.psd`、四张表情合成图、`validation.json` 与精修说明。
-- `build.json` — 每个阶段的记录、监督层的审查结果与评分。
+- `build.json` — `status: complete`（结构与视觉均通过）或 `needs_review`（需要人工处理），以及每个阶段的记录。
+- `visual-rounds/round-00..03/` — 每轮工程和导出模型；`visual-evidence/` 保存选中版本的表情/动作截图及 SHA-256。
+- `visual-repair.json` / `REVIEW.md` — 修复、回退、选用版本和待人工处理的问题。
 
-作为服务运行时（见 `adapters/`），只发布运行时引用到的文件、预览图和精修 ZIP，不发布脚本与日志。
+作为服务运行时（见 `adapters/`），上传运行资产、预览、验证报告和精修 ZIP。成功产物允许绑定；`needs_review` 只允许本人下载工程与静态预览，后端必须禁止其运行资产读取和绑定。ZIP 含检查证据与精修说明，不含脚本、原始供应商日志或每轮完整工程。
 
 ### 环境要求
 
@@ -64,7 +66,7 @@ git clone https://github.com/lvhaojie456/image-to-live2d.git
 cd image-to-live2d
 bash setup_project.sh          # 建 .venv、装依赖、生成 .env
 $EDITOR .env                   # 填入密钥、模型名、SSH 主机别名与本机工具路径
-.venv/bin/python -m unittest discover -s tests   # 38 项，不需要 GPU 和密钥
+.venv/bin/python -m unittest discover -s tests   # 单元测试不需要 GPU 和密钥
 ```
 
 GPU 主机上：把 See-through 检出到 `REMOTE_SEE_THROUGH`，在其 Python 环境里安装它的依赖，然后
@@ -89,11 +91,11 @@ python scripts/patch_seethrough.py /path/to/see-through
 .venv/bin/python live2d_pipeline.py --help
 ```
 
-失败后重跑可以复用检查点，不重复付费：`--reuse-plan`、`--reuse-decomposition`、`--reuse-expressions`。进度通过 `LIVE2D_PROGRESS_FILE` 指向的 JSON 文件对外暴露。
+同一输入的重跑可通过 `--reuse-plan`、`--reuse-decomposition`、`--reuse-expressions` 复用检查点，减少重复请求；自动修复仍可能产生新的图像编辑调用。`--supervisor-state work/job-state.json` 让同一任务的重试共用预算；队列适配器自动设置。进度通过 `LIVE2D_PROGRESS_FILE` 对外暴露，`repairing` 表示正在修复并复检。进程成功退出后仍须检查 `build.json.status`，`needs_review` 不代表视觉通过。
 
 ### 作为服务
 
-`adapters/anyi/worker.py` 是一个只出站的轮询适配器：向任务队列领取任务、按租约续约、跑 `build`、逐文件带 SHA-256 上传、上报完成或带白名单诊断码的失败。它不需要在制作主机上开任何入站端口。队列一侧的协议只有六个接口，写在 [docs/queue-protocol.md](docs/queue-protocol.md) 里，你可以用任何后端实现。
+`adapters/anyi/worker.py` 是一个只出站的轮询适配器：向任务队列领取任务、按租约续约、跑 `build`、逐文件带 SHA-256 上传、上报完成或带白名单诊断码的失败。它不需要在制作主机上开任何入站端口。队列一侧的六个 worker 接口写在 [docs/queue-protocol.md](docs/queue-protocol.md) 里，你可以用任何后端实现。服务端需支持新版视觉报告（`schemaVersion: 2`）和 `needs_review`；旧版后端只看结构检查会错误发布，必须配套升级。文件上传超时为 300 秒，提供 [256 MB Nginx location 示例](adapters/anyi/nginx-location.conf)。
 
 ### 局限
 
@@ -114,7 +116,7 @@ python scripts/patch_seethrough.py /path/to/see-through
 
 An automated pipeline that turns a single character image into a Live2D model. It does not replace Cubism Editor: the output is a **first pass meant to be refined**, and every model ships with the layered PSD, the `.cmo3` project and a verification report, so an artist starts from something that already moves instead of cutting layers from scratch.
 
-Nine stages, all driven by code, each with a deterministic recovery when it fails:
+Nine base stages run in order, followed by exported-model visual review and bounded repairs. Recoverable failures use rule-based fallbacks:
 
 | Stage | What happens | Where |
 | --- | --- | --- |
@@ -126,9 +128,9 @@ Nine stages, all driven by code, each with a deterministic recovery when it fail
 | 6 Expressions | two masked edits give closed eyes and an open mouth; OpenCV **measures** cavity, teeth, tongue and eyelids | image model + local |
 | 7 Refinement package | reorder, split left/right, separate sleeves from hands, register expressions, write and read back the PSD | local |
 | 8 Rig | psd2live builds meshes / deformers / physics; arm and skirt warps plus a procedural idle loop are added | local JVM |
-| 9 Verify | the official Cubism Core renders 363 poses: no flipped triangles, feet drift < 0.25 px | local JVM |
+| 9 Verify | official Cubism Core evaluates 370 poses and renders expressions, extremes and sequences: no flipped triangles, feet drift < 0.25 px | local JVM |
 
-On top sits a **supervisor**: a vision model reviews thumbnails at the planning, decomposition and expression gates and scores the result; on failure it picks the next step from a fixed menu (replan, clip background, shrink motion, redo expressions) within a per-job budget, and paid actions only ever become suggestions. The default `shadow` mode records without intervening. See [docs/pipeline.md](docs/pipeline.md) and [docs/supervisor.md](docs/supervisor.md).
+The **supervisor** defaults to `act`: it checks expressions, body extremes and consecutive face/body frames from the exported model against the original identity. Major defects trigger a fixed repair menu for at most **3 rounds**. Every round is retained; regressions roll back, and two rounds without improvement stop the loop. Local expression edits use your image model and can incur charges. Full-portrait regeneration remains a separate user action. Missing visual evidence or unresolved major defects produce `needs_review`: a retained editing project, not a usable avatar. See [docs/pipeline.md](docs/pipeline.md) and [docs/supervisor.md](docs/supervisor.md).
 
 ### Outputs
 
@@ -136,9 +138,11 @@ A successful build directory contains:
 
 - `body-motion/model/` — `.moc3`, one 4096 texture atlas, `physics3`, `cdi3`, six `motion3` groups (idle, breathing, lean, arms, skirt, expressions) and the `.cmo3` project.
 - `cubism-ready/` — the grouped `cubism_refinement.psd` (about 33 layers), `expression_parts.psd`, four expression composites, `validation.json` and refinement notes.
-- `build.json` — every stage's record plus the supervisor's gate results and score.
+- `build.json` — `status: complete` when structural and visual checks pass, or `needs_review` for a manual handoff, plus stage records.
+- `visual-rounds/round-00..03/` — every candidate project and exported model; `visual-evidence/` contains selected expression/motion screenshots and SHA-256 hashes.
+- `visual-repair.json` / `REVIEW.md` — repair decisions, rollbacks, selected round and issues for the artist.
 
-When run as a service (see `adapters/`), only runtime-referenced files, previews and the refinement ZIP are published; never scripts or logs.
+The service adapter uploads referenced runtime assets, previews, validation and the editing ZIP. Successful models may be bound; `needs_review` permits owner-only project/static-preview downloads while the server must deny runtime access and binding. The ZIP includes review evidence and notes, but excludes scripts, raw provider logs and complete per-round workspaces.
 
 ### Requirements
 
@@ -164,7 +168,7 @@ git clone https://github.com/lvhaojie456/image-to-live2d.git
 cd image-to-live2d
 bash setup_project.sh          # creates .venv, installs deps, writes .env
 $EDITOR .env                   # keys, model names, SSH host alias, local tool paths
-.venv/bin/python -m unittest discover -s tests   # 38 tests; no GPU or API key needed
+.venv/bin/python -m unittest discover -s tests   # unit tests need no GPU or API key
 ```
 
 On the GPU host: check out See-through at `REMOTE_SEE_THROUGH`, install its requirements in its Python environment, then
@@ -189,11 +193,11 @@ python scripts/patch_seethrough.py /path/to/see-through
 .venv/bin/python live2d_pipeline.py --help
 ```
 
-Reruns after a failure reuse checkpoints so nothing is paid for twice: `--reuse-plan`, `--reuse-decomposition`, `--reuse-expressions`. Progress is exposed through the JSON file named by `LIVE2D_PROGRESS_FILE`.
+Use `--reuse-plan`, `--reuse-decomposition` and `--reuse-expressions` for the same input to reduce repeated requests; repairs can still invoke paid image edits. Pass `--supervisor-state work/job-state.json` to share the budget across retries of one job; the queue adapter does this automatically. `LIVE2D_PROGRESS_FILE` exposes progress, including `repairing`. A successful process exit can still mean `needs_review`; read `build.json.status` before publishing.
 
 ### As a service
 
-`adapters/anyi/worker.py` is an outbound-only polling adapter: it claims jobs from a queue, renews a lease, runs `build`, uploads each file with its SHA-256, and reports completion or a whitelisted failure diagnosis. No inbound port is needed on the build host. The queue side is six endpoints, specified in [docs/queue-protocol.md](docs/queue-protocol.md), and can be implemented on any backend.
+`adapters/anyi/worker.py` is an outbound-only polling adapter: it claims jobs from a queue, renews a lease, runs `build`, uploads each file with its SHA-256, and reports completion or a whitelisted failure diagnosis. No inbound port is needed on the build host. The six worker endpoints are specified in [docs/queue-protocol.md](docs/queue-protocol.md) and can be implemented on any backend. The server must support visual validation `schemaVersion: 2` and `needs_review`; upgrade a server that only checks geometry before connecting this adapter. File uploads allow 300 seconds; a [256 MB Nginx location example](adapters/anyi/nginx-location.conf) is included.
 
 ### Limitations
 

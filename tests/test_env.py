@@ -8,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import live2d_pipeline
 from live2d_pipeline import env, image_model, planner_model, required_env
+from scripts.supervisor import Supervisor
 
 
 class EnvNamesTests(unittest.TestCase):
@@ -31,6 +32,19 @@ class EnvNamesTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as raised:
                 required_env('REMOTE_SSH_HOST')
             self.assertIn('REMOTE_SSH_HOST', str(raised.exception))
+
+    def test_supervisor_defaults_to_act_and_uses_the_neutral_model_setting(self):
+        with patch.dict(os.environ, {'PLANNER_MODEL': 'neutral-vision', 'ASTRA_MODEL': 'legacy-vision'}, clear=True):
+            supervisor = Supervisor(Path('unused'))
+            self.assertEqual(supervisor.mode, 'act')
+            self.assertEqual(supervisor.model, 'neutral-vision')
+        with patch.dict(os.environ, {'PLANNER_MODEL': 'planner', 'SUPERVISOR_MODEL': 'reviewer'}, clear=True):
+            self.assertEqual(Supervisor(Path('unused')).model, 'reviewer')
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(Supervisor(Path('unused'), mode='off').model)
+            with self.assertRaises(SystemExit) as raised:
+                Supervisor(Path('unused'))
+            self.assertIn('PLANNER_MODEL', str(raised.exception))
 
     def test_client_reads_new_and_legacy_credentials(self):
         with patch.dict(os.environ, {'APEXIN_API_KEY': 'legacy-key', 'APEXIN_BASE_URL': 'https://legacy.example/v1/'}, clear=True), \

@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -12,6 +13,17 @@ from adapters.anyi.worker import Api, collect_delivery, read_diagnosis
 
 
 class AnyiWorkerTests(unittest.TestCase):
+    def test_upload_uses_300_seconds_while_control_requests_keep_90(self):
+        api=Api('https://queue.example','x'*40)
+        with patch.object(api.opener,'open') as opened:
+            opened.return_value.__enter__.return_value.read.return_value=b'{"job":null}'
+            api.call('/internal/live2d/jobs/claim',{})
+            self.assertEqual(opened.call_args.kwargs['timeout'],90)
+            with tempfile.TemporaryDirectory() as directory:
+                path=Path(directory)/'project.zip';path.write_bytes(b'PKfixture')
+                api.upload({'id':'test-job','leaseToken':'test-lease'},'project.zip',path)
+            self.assertEqual(opened.call_args.kwargs['timeout'],300)
+
     def test_delivery_preserves_atlas_and_separates_chat_mouth_from_idle(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)/'source'
@@ -19,7 +31,7 @@ class AnyiWorkerTests(unittest.TestCase):
             verification=root/'body-motion/verification'
             material=root/'cubism-ready'
             for p in [model,verification,material]: p.mkdir(parents=True,exist_ok=True)
-            (root/'build.json').write_text(json.dumps({'status':'complete','stages':{'body_motion':{'motion_scale':0.66},'foreground':{'leaking':['topwear']},'visual_review':{'score':0.8,'issues':[]}}}))
+            (root/'build.json').write_text(json.dumps({'status':'complete','stages':{'body_motion':{'motion_scale':0.66},'foreground':{'leaking':['topwear']},'visual_review':{'schemaVersion':2,'passed':True,'identityPreserved':True,'motionAdequate':True,'score':0.8,'issues':[]}}}))
             (root/'body-motion/core-report.json').write_text(json.dumps({'passed':True}))
             (verification/'sequence-checks.json').write_text(json.dumps({'passed':True,'poseCount':363,'feetMaxDisplacementPixels':0}))
             (material/'validation.json').write_text(json.dumps({'psd_roundtrip_passed':True}))
@@ -48,6 +60,14 @@ class AnyiWorkerTests(unittest.TestCase):
             with zipfile.ZipFile(result['project.zip']) as archive:
                 self.assertIn('body-motion/model/character.cmo3',archive.namelist())
                 self.assertFalse(any(n.endswith('.txt') for n in archive.namelist()))
+            build=json.loads((root/'build.json').read_text())
+            build['stages']['visual_review']['identityPreserved']=False
+            (root/'build.json').write_text(json.dumps(build))
+            with self.assertRaises(ValueError): collect_delivery(root,Path(directory)/'bad-success')
+            build['status']='needs_review'
+            (root/'build.json').write_text(json.dumps(build))
+            handoff=collect_delivery(root,Path(directory)/'handoff')
+            self.assertFalse(json.loads(handoff['validation.json'].read_text())['visualPassed'])
             refs['Textures']=['../../build.json']
             manifest.write_text(json.dumps({'Version':3,'FileReferences':refs}))
             with self.assertRaises(ValueError): collect_delivery(root,Path(directory)/'unsafe')

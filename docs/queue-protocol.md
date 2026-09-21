@@ -2,7 +2,7 @@
 
 `adapters/anyi/worker.py` 把流水线接到一个持久化任务队列后面。制作主机**只出站**：没有入站端口、没有 webhook。队列一侧需要实现下面六个接口，用什么后端都可以。
 
-The adapter runs the pipeline behind a durable job queue. The build host is **outbound only**: no inbound port, no webhook. Implement the six endpoints below on any backend.
+The adapter runs the pipeline behind a durable job queue. The build host is **outbound only**: no inbound port, no webhook. Implement the six endpoints below on any backend. This version requires schemaVersion 2 visual validation and the `needs_review` terminal state; update a backend that previously published on structural checks alone before connecting the adapter.
 
 ## 鉴权与租约 / Auth and leases
 
@@ -50,7 +50,7 @@ The adapter runs the pipeline behind a durable job queue. The build host is **ou
 {"stage": "decomposing", "progress": 25}
 ```
 
-`stage` ∈ `preparing | generating | planning | decomposing | expressions | refining | rigging | verifying | uploading`；`progress` 为 0–99 的整数。服务端应延长租约、记录进度且不允许进度倒退。
+`stage` ∈ `preparing | generating | planning | decomposing | expressions | refining | rigging | verifying | repairing | uploading`；`progress` 为 0–99 的整数。服务端应延长租约、记录进度且不允许进度倒退。`repairing` 为修复并复检，通常进度 93；之后的复查可能上报 verifying / 92，后端应保留最大进度。
 
 ### `POST /internal/live2d/jobs/:id/artifacts?name=<相对路径>`
 
@@ -63,14 +63,51 @@ multipart 单文件字段 `file`，请求头 `X-Content-SHA256: <hex>`。服务�
 | `runtime/model.model3.json` | 运行时清单，含 `AnyiBounds`（中性姿态外接框） |
 | `runtime/<引用的每个文件>` | `.moc3`、纹理、`physics3`、`cdi3`、各 `motion3`；待机动作已去掉口型曲线 |
 | `preview.png` / `preview.gif` | 中性姿态与待机循环 |
-| `validation.json` | `corePassed`、`motionPassed`、`psdPassed`、`poseCount`、`feetMaxDisplacementPixels`、`motionScale`、`backgroundClipped`、`visualReview` |
-| `project.zip` | 精修工程：PSD、cmo3、moc3、json、md |
+| `validation.json` | `schemaVersion: 2`、`visualPassed`、结构三项 `*Passed`、动作指标、`visualReview`、`reviewSummary`、`repair` |
+| `project.zip` | 精修工程及验收：PSD、cmo3、moc3、json、md，`REVIEW.md`、`visual-repair.json` 和 `visual-evidence/` |
 
 建议的服务端上限：单个运行文件 32 MB，`project.zip` 240 MB，单任务总计 350 MB、100 个文件；`runtime/` 下只接受 `.moc3`、`.png`、`.json` 等白名单类型，并检查文件头。
 
 ### `POST /internal/live2d/jobs/:id/complete`
 
-请求体空。服务端在这里做最终校验后才把任务标为成功：四个必备文件齐全（`runtime/model.model3.json`、`preview.png`、`project.zip`、`validation.json`）；`model3.json` 里引用的每个文件都已上传且路径是安全的相对路径（无绝对路径、无 `..`、无外部 URL）；`validation.json` 三项 `*Passed` 都为 `true`。任一不符返回 422，任务保持运行态等待租约过期。
+请求体空。服务端先检查四个必备文件（`runtime/model.model3.json`、`preview.png`、`project.zip`、`validation.json`）、运行清单所有引用的完整性与路径安全性，以及 `corePassed` / `motionPassed` / `psdPassed` 全为 true。然后**独立校验视觉报告**，不能仅信任 worker 的成功标签。
+
+```json
+{
+  "schemaVersion": 2,
+  "visualPassed": true,
+  "corePassed": true,
+  "motionPassed": true,
+  "psdPassed": true,
+  "refinementRequired": true,
+  "editorCompatibility": "unverified",
+  "poseCount": 370,
+  "feetMaxDisplacementPixels": 0.00023,
+  "motionScale": 1.0,
+  "backgroundClipped": [],
+  "visualReview": {
+    "schemaVersion": 2,
+    "passed": true,
+    "identityPreserved": true,
+    "motionAdequate": true,
+    "score": 0.8,
+    "issues": [],
+    "explanation": "未见严重缺陷"
+  },
+  "reviewSummary": "",
+  "repair": {"schemaVersion": 2, "passed": true, "selectedRound": "round-01", "reason": "passed"}
+}
+```
+
+- 检查 schemaVersion、布尔字段类型、有限的 0–1 score、问题列表的 code / severity / part 白名单与非空 detail。具体字段见 [supervisor.md](supervisor.md)。
+- 只有身份保持、动作可见、没有 major/critical 问题时，计算结果才为通过；该结果必须同时等于 `visualReview.passed` 和 `visualPassed`。
+- 自洽且通过 → `succeeded`；自洽但不通过 → `needs_review`，保存不超过 200 字的 `reviewSummary` 或安全的默认文案。
+- `visualReview: null` 只在 `visualPassed: false` 时有效，交付为 `needs_review`。
+- 缺少新版报告、类型/枚举错误、成功标志矛盾或结构不合格返回 422，不改变任务为成功。当前适配器会把该错误转入 fail 处理。
+
+响应为 `{"ok":true,"status":"succeeded"}` 或 `{"ok":true,"status":"needs_review"}`。同一租约重复完成时返回相同状态。没有视觉报告的旧 worker 不能向新版后端发布；旧版只检查结构的后端必须升级，避免误发布人工处理工程。
+
+The backend must independently validate the versioned visual report and recompute the verdict from identity, motion and issue severity. A valid visual failure (or an unavailable review represented by null/false) becomes `needs_review`. Missing or contradictory reports are rejected with 422. Completion is idempotent for the same lease and returns the terminal status.
 
 ### `POST /internal/live2d/jobs/:id/fail`
 
@@ -83,16 +120,29 @@ multipart 单文件字段 `file`，请求头 `X-Content-SHA256: <hex>`。服务�
 ## 状态机 / Job state machine
 
 ```text
-queued ──claim──▶ running ──complete──▶ succeeded
-                    │  ▲                    (产物不可变；不允许重试)
-                    │  └── claim again (lease expired, attempts < 3)
+queued ──claim──▶ running ──complete, visual pass──▶ succeeded
+                    │                        (immutable; no retry)
+                    ├──complete, visual fail──▶ needs_review
+                    │                              └──retry──▶ queued
                     ├──fail──▶ failed ──retry(hint?)──▶ queued
-                    └──cancel─▶ cancelled ──retry──▶ queued
+                    ├──cancel─▶ cancelled ──retry──▶ queued
+                    └──claim again (lease expired, attempts < 3)
 ```
 
-- 成功的任务不可变：只有 `failed` / `cancelled` 允许重试。这也是客户端可以永久缓存产物的前提。
-- 用户取消时服务端把任务标为 `cancelled`，适配器在下一次续约收到 409 后终止本地进程；已提交到 GPU 的推理可能自行跑完，但不会被发布。
-- 同一对象同时只允许一个活动任务是队列一侧的策略，与适配器无关。
+- 成功任务不可变；`failed` / `cancelled` / `needs_review` 可以按后端策略重试，预算不重置。`needs_review` 应在 UI 显示“需要人工处理”，并保留工程下载。
+- `needs_review` **禁止绑定、运行资产读取和运行缓存清单**，只能本人读取 `project.zip`、`preview.png`、`validation.json`，响应 `Cache-Control: private, no-store`。因为这种任务可重试，不能使用成功模型的 immutable 缓存。
+- 用户取消时服务端标记 `cancelled`，适配器在下一次续约收到 409 后终止本地进程；GPU 推理可能自行跑完，但不会被发布。
+- 同一对象同时只允许一个活动任务是队列一侧策略，与适配器无关。
+
+A manual-handoff result must remain private, downloadable and unbindable. Deny its runtime files and cache manifest; allow only owner access to the project ZIP, static preview and validation with `private, no-store`. Successful immutable models may retain the existing cache policy. Retrying a job does not reset its repair budget.
+
+## 上传代理 / Upload proxy
+
+适配器文件上传超时为 **300 秒**，领取/心跳等控制请求仍为 90 秒。代理要给 multipart 请求留出额外空间：[nginx-location.conf](../adapters/anyi/nginx-location.conf) 提供 `/internal/live2d/` 的 **256 MB** 和 300 秒配置，后端本身仍限制 ZIP 240 MB、单个运行资产 32 MB。
+
+把示例 include 到**实际加载的** API server 块，调整 proxy_pass 指向你的队列后端。`nginx -T` 确认它生效，修改前备份，`nginx -t` 成功后 reload。`sites-enabled` 可能是独立旧文件，只改 `sites-available` 不一定生效。本仓库不包含安忆服务器地址或自动修改生产服务的脚本。
+
+Uploads use a 300-second timeout; control requests retain 90 seconds. Include the generic Nginx location in the actively loaded API server block and point it at your backend. Verify with `nginx -T`, back up the config, validate with `nginx -t`, then reload. The 256 MB proxy limit leaves multipart overhead above the API's 240 MB ZIP limit. This repository does not deploy or modify an existing server.
 
 ## 本地目录 / Local layout
 
@@ -103,6 +153,9 @@ queued ──claim──▶ running ──complete──▶ succeeded
 ├── supervisor-state.json     跨尝试的监督预算
 ├── worker-output.txt         子进程输出
 ├── attempt-<hex>/            每次尝试一个构建目录（见 pipeline.md）
+│   ├── visual-rounds/       各轮独立工程、模型和证据
+│   ├── visual-repair.json   修复与选择记录
+│   └── REVIEW.md            人工精修说明
 └── delivery-<hex>/           本次上传的确切文件集
 ```
 

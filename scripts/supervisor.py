@@ -1,15 +1,10 @@
 """Gate reviews, failure diagnosis and bounded recovery actions for one build.
 
-Three layers, cheapest first:
-1. Rules (no model): deterministic recoveries decided by the build itself.
-2. Model (this module): reviews thumbnails at stage gates and, on failure, picks
-   one action from a fixed menu. Answers are JSON and validated against whitelists.
-3. User: paid actions are never executed here; they become a suggestion the App
-   shows and the user confirms.
-
-Modes (LIVE2D_SUPERVISOR_MODE): off = no model calls; shadow (default) = call the
-model, record its decisions, but only execute rule actions; act = execute the
-model's free actions within budget.
+Rules repair deterministic faults; model reviews select bounded actions.
+The final exported-model review is mandatory for publication. act (default)
+permits up to three repair rounds; shadow records reviews without repairs;
+off cannot produce a visual pass. Full-image regeneration remains a separate
+user action; local expression edits belong to the automatic repair budget.
 """
 import base64
 import io
@@ -28,7 +23,7 @@ ACTIONS = ('retry_stage', 'replan_with_hint', 'clip_background', 'tune_motion', 
            'regenerate_image', 'give_up')
 PAID_ACTIONS = {'regenerate_image'}
 BUDGET = {'regenerate_image': 1, 'replan_with_hint': 2, 'tune_motion': 2, 'redo_expressions': 1,
-          'retry_stage': 3, 'model_calls': 8}
+          'retry_stage': 3, 'visual_repairs': 3, 'model_calls': 24}
 DEFAULT_SUGGESTION = {'provider_unavailable': 'retry', 'background_leak': 'regenerate_image',
                       'face_not_located': 'new_input', 'expression_failed': 'retry',
                       'rig_unstable': 'regenerate_image', 'budget_exhausted': 'new_input'}
@@ -81,7 +76,7 @@ class Supervisor:
     def __init__(self, workspace, state_path=None, mode=None, client_factory=None, model=None):
         self.workspace = Path(workspace)
         self.log_dir = self.workspace / 'supervisor'
-        self.mode = (mode or os.environ.get('LIVE2D_SUPERVISOR_MODE') or 'shadow').lower()
+        self.mode = (mode or os.environ.get('LIVE2D_SUPERVISOR_MODE') or 'act').lower()
         if self.mode not in MODES:
             raise ValueError('LIVE2D_SUPERVISOR_MODE must be one of ' + ', '.join(MODES))
         self.state_path = Path(state_path) if state_path else None
@@ -91,8 +86,10 @@ class Supervisor:
                 loaded = json.loads(self.state_path.read_text())
                 if isinstance(loaded.get('used'), dict) and isinstance(loaded.get('history'), list):
                     self.state = loaded
-            except (OSError, ValueError):
-                pass
+                else:
+                    raise ValueError('Invalid supervisor budget state')
+            except (OSError, ValueError) as error:
+                raise ValueError('Cannot recover supervisor budget; preserve it for inspection') from error
         self.client_factory = client_factory
         if model:
             self.model = model
@@ -120,7 +117,9 @@ class Supervisor:
     def _save_state(self):
         if self.state_path:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(json.dumps(self.state, ensure_ascii=False, indent=2))
+            temporary = self.state_path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(self.state, ensure_ascii=False, indent=2))
+            temporary.replace(self.state_path)
 
     def _log(self, name, payload):
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -136,7 +135,7 @@ class Supervisor:
                 self._api = client().with_options(timeout=float(os.environ.get('SUPERVISOR_TIMEOUT_SECONDS', '90')), max_retries=0)
         return self._api
 
-    def ask(self, name, system, text, images, max_tokens=600):
+    def ask(self, name, system, text, images, max_tokens=600, image_size=THUMBNAIL):
         """One non-streaming JSON request. Returns a dict, or None when the model was not
         called (mode off, budget) or the call/answer was unusable. Never raises."""
         record = {'model': self.model, 'mode': self.mode, 'images': [], 'text': text}
@@ -144,19 +143,23 @@ class Supervisor:
             record['skipped'] = 'mode_off'
             self._log(name + '.json', record)
             return None
-        if not self.consume('model_calls', name):
+        if not self.can('model_calls'):
             record['skipped'] = 'model_call_budget'
             self._log(name + '.json', record)
             return None
         content = [{'type': 'text', 'text': text}]
         for label, image in images:
-            uri, size = thumbnail_uri(image)
+            uri, size = thumbnail_uri(image, image_size)
             record['images'].append({'label': label, 'size': list(size)})
             content.append({'type': 'text', 'text': f'[{label}]'})
             content.append({'type': 'image_url', 'image_url': {'url': uri}})
         started = time.time()
         attempts = 2
         for attempt in range(attempts):
+            if not self.consume('model_calls', name):
+                record['skipped'] = 'model_call_budget'
+                self._log(name + '.json', record)
+                return None
             try:
                 answer = self._request(system, content, max_tokens)
                 record['seconds'] = round(time.time() - started, 1)
@@ -201,7 +204,7 @@ class Supervisor:
         system = ('你是 Live2D 制作流水线的质检员。只根据图片回答，输出严格 JSON，不要 Markdown。'
                   '结构：{"ok":true|false,"issues":["string"],"regions":{"face":[x,y,w,h]|null,'
                   '"left_eye":[x,y,w,h]|null,"right_eye":[x,y,w,h]|null,"mouth":[x,y,w,h]|null},"explanation":"一句中文"}。'
-                  'left_eye 指画面右侧（角色自身左眼）。regions 只在需要修正时给出，坐标用缩略图像素，原点左上；不需要修正时填 null。')
+                  'left_eye 指画面左侧，right_eye 指画面右侧（与角色自身左右相反）。regions 只在需要修正时给出，坐标用缩略图像素，原点左上；不需要修正时填 null。')
         answer = self.ask('gate-planning', system, '红框应为脸、蓝框为双眼、绿框为嘴。判断框是否落在正确部位，需要修正时给出新框。',
                           [('input', drawn)])
         if not answer:
@@ -278,6 +281,33 @@ class Supervisor:
             return None
         return {'score': round(score, 2), 'issues': [sanitize_text(i) for i in answer.get('issues', []) if isinstance(i, str)][:8],
                 'explanation': sanitize_text(answer.get('explanation'))}
+
+    def review_model(self, images, round_number):
+        """Strict publication gate on actual exported model frames, not source artwork."""
+        from visual_repair import ISSUE_ACTIONS, PARTS, normalize_review
+        system = (
+            '你是 Live2D 初版模型验收员。检查原人物脸部和实际导出模型的表情、身体极值、连续帧。'
+            '每张拼图的文字是参数姿态标记。依据可见证据输出严格 JSON。'
+            '结构：{"schemaVersion":2,"identityPreserved":true,"motionAdequate":true,"score":0.8,'
+            '"issues":[{"code":"eye_residual","severity":"major","part":"eyes","detail":"中文位置和具体缺陷"}],'
+            '"explanation":"一句中文"}。'
+            'code 只能是 '+','.join(ISSUE_ACTIONS)+'；part 只能是 '+','.join(sorted(PARTS))+'。'
+            'severity 为 critical/major/minor。人物身份改变、闭眼露眼球或明显重影、嘴部矩形色块、'
+            '肢体破洞脱节、明显背景残留或遮挡错误至少 major，不能因为是初版就降为 minor。'
+            '轻微线条生硬、自然度或物理手感可列 minor 留给人工精修。不得因美观总分高而忽略严重缺陷。'
+            '眼下正常皱纹、胡须和皮肤纹理不是残影。轻微呼吸和身体摆动是预期，不要求大幅动作；'
+            '只有极值图几乎完全不动、应动部件静止才判 motionAdequate=false。'
+            'identityPreserved 必须对照原图的年龄、五官、胡须、肤色和画风。看不清关键部位用 other/major 说明，不能猜通过。')
+        answer = self.ask(f'model-review-{round_number:02d}', system,
+                          '分别检查闭眼、单眼、半开嘴、全开嘴、嘴形组合、动作极值和连续帧，列出具体问题。',
+                          images, max_tokens=2200, image_size=1536)
+        if answer is None:
+            return None
+        try:
+            return normalize_review(answer)
+        except ValueError as error:
+            self._log(f'model-review-{round_number:02d}-rejected.json', {'error': str(error)})
+            return None
 
     # ----- failure handling -----------------------------------------------
     def failure_packet(self, stage, error, metrics=None):

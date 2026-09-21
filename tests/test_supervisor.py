@@ -58,7 +58,7 @@ class SupervisorTests(unittest.TestCase):
 
     def test_budget_is_shared_through_the_state_file_and_stops_model_calls(self):
         state = Path(tempfile.mkdtemp()) / 'state.json'
-        sup = self.make(['{"score":0.8,"issues":[]}'] * 20, state=state)
+        sup = self.make(['{"score":0.8,"issues":[]}'] * BUDGET['model_calls'], state=state)
         for _ in range(BUDGET['model_calls']):
             self.assertIsNotNone(sup.visual_review([('sheet', Image.new('RGB', (32, 32)))]))
         self.assertIsNone(sup.visual_review([('sheet', Image.new('RGB', (32, 32)))]))
