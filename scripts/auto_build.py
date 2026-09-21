@@ -83,6 +83,7 @@ def make_recipe(source,decomp,rs,eyes,mouth,out,repair_level=0):
   hands['handwear-r']=[[x,cuff],[mw//2,free]]
  recipe={"schema_version":1,"reference_sha256":sha(source),"source_psd_sha256":sha(decomp),"edit_sha256":{"mouth":sha(mouth),"eyes":sha(eyes)},"reference_size":[rw,rh],"model_canvas":[mw,mh],"edit_size":[ew,eh],"edit_crop":list(crop),"closed_eyes":{"eye_close-r":{"rect":[le[0],le[1],le[0]+le[2],le[1]+le[3]],"thresholds":{"dark":100,"light":155}},"eye_close-l":{"rect":[re[0],re[1],re[0]+re[2],re[1]+re[3]],"thresholds":{"dark":100,"light":155}}},"body_splits":body,"hand_splits":hands,"manual_targets":{"ParamArmL":["arm-l","hand-l"],"ParamArmR":["arm-r","hand-r"],"ParamSkirtSwing":["bottomwear"],"ParamBodyAngleX":["topwear","bottomwear","neck"],"ParamLegL":["legwear-l","footwear-l"],"ParamLegR":["legwear-r","footwear-r"]}}
  recipe['edit_sizes']={'eyes':[ew,eh],'mouth':[ow,oh]}
+ recipe['continuous_expressions']=os.environ.get('LIVE2D_CONTINUOUS_EXPRESSIONS','false').lower()=='true'
  # Detect actual mouth pixels. Coarse rectangles must never become visible skin blocks.
  recipe['mouth']=measure_mouth(mouth,mo)
  for suffix in ('r','l'):

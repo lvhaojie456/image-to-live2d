@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 from scipy.ndimage import binary_erosion
 from scipy.ndimage import distance_transform_edt
 
@@ -114,11 +114,19 @@ def build_face_assets(base, mouth, eyes, recipe_path, output):
     sx, sy = recipe['mouth']['cavity_sample']
     replace = np.maximum(np.array(teeth_mask), np.array(tongue_mask)).astype(float)/255
     cavity[..., :3] = np.round(cavity[..., :3]*(1-replace[..., None]) + cavity[sy, sx, :3]*replace[..., None])
-    interior = binary_erosion(np.array(mouth_mask)>127, iterations=3)
-    features['mouth_open'] = mask_image(Image.fromarray(cavity), Image.fromarray((interior*255).astype('uint8')))
+    continuous=bool(recipe.get('continuous_expressions'))
+    mouth_width=mouth_mask.getbbox()[2]-mouth_mask.getbbox()[0]
+    interior = binary_erosion(np.array(mouth_mask)>127, iterations=max(3,round(mouth_width*.03)) if continuous else 3)
+    # Keep the cavity under the complete lip border: separate erosions left
+    # subpixel cracks after downsampling and made the lip layers fragmented.
+    features['mouth_open'] = mask_image(Image.fromarray(cavity),mouth_mask if continuous else Image.fromarray((interior*255).astype('uint8')))
     features['tooth-t'] = mask_image(full_mouth, teeth_mask)
     features['tongue'] = mask_image(full_mouth, tongue_mask)
-    ring = np.array(mouth_mask).copy()
+    # The dark aperture excludes the coloured lip rim. Preserve that surrounding
+    # artwork as continuous ribbons instead of a subpixel ring of isolated dots.
+    lip_radius=max(2,round(mouth_width*.055))
+    lip_mask=mouth_mask.filter(ImageFilter.MaxFilter(lip_radius*2+1)).filter(ImageFilter.GaussianBlur(max(.5,lip_radius*.15))) if continuous else mouth_mask
+    ring = np.array(lip_mask).copy()
     ring[interior] = 0
     top_ring = ring.copy()
     top_ring[recipe['mouth']['lip_split_y']:] = 0

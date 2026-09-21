@@ -59,6 +59,15 @@ def run(output, kit, java_home, core):
     fps=12;frames=round(duration*fps)
     for i in range(frames):
         row('frame_%03d'%i,sample_motion(motion,i/fps))
+    # Slow parameter sweeps expose alpha ghosts and mouth seams hidden between
+    # the old open/closed endpoints. Both halves of the sweep are rendered.
+    for i in range(61):
+        opening=(1+math.cos(2*math.pi*i/60))/2
+        row(f'eye_sweep_{i:03d}',{'ParamEyeLOpen':opening,'ParamEyeROpen':opening})
+        row(f'mouth_sweep_{i:03d}',{'ParamMouthOpenY':1-opening})
+    for i in range(21):
+        for form in (-1,0,1):
+            row(f'mouth_grid_{i:02d}_{form+1}',{'ParamMouthOpenY':i/20,'ParamMouthForm':form},False)
     # Short isolated loops make subtle breathing and each component easy to inspect.
     for group,params in [('breath',('ParamBreath',)),('lean',('ParamBodyAngleZ',)),
                           ('arms',('ParamArmLSwing','ParamArmRSwing')),('skirt',('ParamSkirtSwing',))]:
@@ -83,6 +92,14 @@ def run(output, kit, java_home, core):
             bg=Image.new('RGB',image.size,'#e7eef2');bg.paste(image,(0,0),image);frames.append(bg)
         frames[0].save(out/dest,save_all=True,append_images=frames[1:],duration=ms,loop=0,disposal=2)
     gif('frame_','body-idle.gif',round(1000/fps),(295,0,735,1024))
+    material=json.loads((output/'materials/authoring-manifest.json').read_text())
+    face=next(l['bbox'] for l in material['layers'] if l['name']=='face')
+    with Image.open(out/'neutral.png') as neutral:render_width,render_height=neutral.size
+    sx=render_width/material['width'];sy=render_height/material['height']
+    face_crop=(max(0,round((face[0]-30)*sx)),max(0,round((face[1]-20)*sy)),
+               min(render_width,round((face[2]+30)*sx)),min(render_height,round((face[3]+25)*sy)))
+    gif('eye_sweep_','eyes-slow.gif',50,face_crop)
+    gif('mouth_sweep_','mouth-slow.gif',50,face_crop)
     for group,crop in [('breath',(370,120,660,450)),('lean',(295,0,735,1024)),
                        ('arms',(295,175,735,585)),('skirt',(365,310,680,570))]:
         gif(group+'_',group+'.gif',round(duration*1000/24),crop)

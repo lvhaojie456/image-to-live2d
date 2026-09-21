@@ -207,6 +207,10 @@ def build(source, face_assets, recipe_path, out):
         if image.size!=size:
             raise ValueError('Expression asset is not registered to the PSD canvas')
         layers[entry['name']]=image
+    expression_rig=None
+    if recipe.get('continuous_expressions'):
+        from expression_rig import prepare_expression_rig
+        expression_rig=prepare_expression_rig(layers)
     (out/'layers').mkdir()
     records=[]
     for index,name in enumerate(ordered_names(layers)):
@@ -238,6 +242,7 @@ def build(source, face_assets, recipe_path, out):
     sheet.save(out/'expressions-review.png')
     manifest=dict(name='RefinementCharacter',width=size[0],height=size[1],layers=records,
                   stage='materials_only_no_keyforms',
+                  expression_rig=expression_rig,
                   manual_parameter_targets=recipe['manual_targets'])
     (out/'authoring-manifest.json').write_text(json.dumps(manifest,indent=2))
     report=dict(stage='ready_for_manual_rigging',psd_layer_count=count,canvas=size,

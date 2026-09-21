@@ -6,11 +6,21 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
-from body_motion import PARAMETERS,BODY_PARAMETERS,EXPRESSION_PARAMETERS,motion_document,validate_recipe
+from body_motion import PARAMETERS,BODY_PARAMETERS,EXPRESSION_PARAMETERS,motion_document,validate_recipe,values_at
 from verify_body_motion import sample_motion
 
 
 class BodyMotionTests(unittest.TestCase):
+    def test_each_blink_closes_once_without_a_jump_or_rebound(self):
+        samples=[values_at(i/1000,8)['ParamEyeLOpen'] for i in range(8001)]
+        closed_runs=sum(v<.99 and (i==0 or samples[i-1]>=.99) for i,v in enumerate(samples))
+        self.assertEqual(closed_runs,2)
+        self.assertLess(max(abs(a-b) for a,b in zip(samples,samples[1:])),.01)
+        for center in [1.6,5.6]:
+            seq=[values_at(center-.2+i*.002,8)['ParamEyeLOpen'] for i in range(201)]
+            self.assertTrue(all(a>=b-1e-9 for a,b in zip(seq[:100],seq[1:101])))
+            self.assertTrue(all(a<=b+1e-9 for a,b in zip(seq[100:],seq[101:])))
+
     def test_motion3_round_trip_loop_and_bounds(self):
         doc=motion_document(8,30,PARAMETERS)
         self.assertEqual(doc['Meta']['CurveCount'],9)

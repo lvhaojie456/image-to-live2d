@@ -66,8 +66,13 @@ def validate_recipe(data):
 
 def values_at(t, duration):
     phase=2*math.pi*t/duration
-    blink = max(0.0, max((1+math.cos(2*math.pi*(t/duration-0.20)/0.045))/2 if abs((t/duration-0.20+0.5)%1-0.5)<0.045 else 0,
-                          (1+math.cos(2*math.pi*(t/duration-0.70)/0.045))/2 if abs((t/duration-0.70+0.5)%1-0.5)<0.045 else 0))
+    # One close/open pulse per blink. The previous cosine covered two periods
+    # inside its window and jumped at the edges, producing three rapid blinks.
+    def blink_pulse(center):
+        distance=abs((t/duration-center+.5)%1-.5)
+        half_width=.025
+        return (1+math.cos(math.pi*distance/half_width))/2 if distance<half_width else 0
+    blink=max(blink_pulse(.20),blink_pulse(.70))
     mouth_phase=max(0.0, math.sin(phase*2))
     return {'ParamBreath':(1-math.cos(phase*2))/2,
             'ParamBodyAngleZ':8*math.sin(phase),
@@ -195,6 +200,7 @@ def build_body_motion(package, output, recipe_path, kit, engine, java_home, core
     output.mkdir(parents=True,exist_ok=True)
     material=output/'materials';shutil.copytree(package,material)
     motion_manifest=json.loads((material/'authoring-manifest.json').read_text())
+    recipe={**recipe,'expressions':manifest.get('expression_rig')}
     motion_manifest.update(name='MotionCharacter',procedural_motion=recipe,
         config={'mesh_spacing':24,'preserve_source_raster':True,'source_closed_eyes':True,
                 'head_strength':0.2,'head_roll_strength':0.25,'initial_head_angle_z':0,

@@ -122,7 +122,8 @@ def evidence_images(candidate, original, regions):
     manifest = json.loads((directory / 'cubism-ready/authoring-manifest.json').read_text())
     with Image.open(verification / 'neutral.png') as image:
         width, height = image.size
-    face = next(layer['bbox'] for layer in manifest['layers'] if layer['name'] == 'face')
+    head_boxes=[layer['bbox'] for layer in manifest['layers'] if layer['name'] in {'face','front hair','back hair','ears-l','ears-r'}]
+    face=[min(b[0] for b in head_boxes),min(b[1] for b in head_boxes),max(b[2] for b in head_boxes),max(b[3] for b in head_boxes)]
     sx, sy = width / manifest['width'], height / manifest['height']
     x1, y1, x2, y2 = face
     pad = max(x2 - x1, y2 - y1) * .2
@@ -151,11 +152,24 @@ def evidence_images(candidate, original, regions):
                    'mouth_half', 'mouth_open', 'mouth_smile', 'closed_open']
     poses = ['neutral', 'ParamBodyAngleZ_min', 'ParamBodyAngleZ_max', 'ParamBreath_max',
              'ParamArmLSwing_min', 'ParamArmLSwing_max', 'ParamArmRSwing_max', 'ParamSkirtSwing_max']
+    # One fixed viewport per sequence. Individually recentering each silhouette
+    # concealed the very translations and leaning that this gate should inspect.
+    sequence=[f'frame_{i:03d}' for i in range(16,24)]
+    boxes=[]
+    for name in poses+sequence:
+        with Image.open(verification/(name+'.png')) as image:
+            bounds=image.convert('RGBA').getchannel('A').getbbox()
+            if bounds:boxes.append(bounds)
+    body_box=(max(0,min(b[0] for b in boxes)-10),max(0,min(b[1] for b in boxes)-10),
+              min(width,max(b[2] for b in boxes)+10),min(height,max(b[3] for b in boxes)+10))
     evidence = [('reference_identity', destination/'reference.png'),
                 ('exported_expression_states', sheet(expressions, 'expressions.png', face_box)),
-                ('exported_body_extremes', sheet(poses, 'poses.png')),
-                ('exported_consecutive_body_frames', sheet([f'frame_{i:03d}' for i in range(16, 24)], 'sequence.png')),
+                ('exported_body_extremes', sheet(poses, 'poses.png',body_box)),
+                ('exported_consecutive_body_frames', sheet(sequence, 'sequence.png',body_box)),
                 ('exported_consecutive_face_frames', sheet([f'frame_{i:03d}' for i in range(16, 24)], 'face-sequence.png', face_box))]
+    if (verification/'eye_sweep_000.png').is_file():
+        evidence += [('slow_eye_transition',sheet([f'eye_sweep_{i:03d}' for i in [0,10,15,20,23,26,28,30]],'eye-sweep.png',face_box)),
+                     ('slow_mouth_transition',sheet([f'mouth_sweep_{i:03d}' for i in [0,5,10,15,20,25,28,30]],'mouth-sweep.png',face_box))]
     moc = directory / 'body-motion/model/MotionCharacter.moc3'
     hashes = {str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest() for _, p in evidence}
     hashes[str(moc.relative_to(directory))] = hashlib.sha256(moc.read_bytes()).hexdigest()
