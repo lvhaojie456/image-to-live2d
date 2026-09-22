@@ -21,3 +21,6 @@ outputs/
 .idea/
 .vscode/
 *.swp
+
+# Mouth-landmark helper venv + model (provisioned by scripts/install_mouth_landmarks.py)
+/dependencies/

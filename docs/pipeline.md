@@ -57,9 +57,13 @@ A layer is flagged when its bbox exceeds 60% of the canvas, or more than 30% of 
 
 按脸部矩形裁一块正方形（外扩 45%），做两次 `images.edit`：遮罩只露出双眼或嘴，提示词要求保持年龄、身份、画风、胡子、皱纹和所有未遮罩像素。得到 `expression_eyes.png`（闭眼）与 `expression_mouth.png`（张嘴）。模型返回后强制恢复遮罩外的原图像素，防止局部返修改变胡须、肤色或其它部位。两个编辑结果允许有不同分辨率，各自测量后配准到同一画布。
 
-然后**测量**而不是套矩形（`auto_expression.py`）：张嘴图转灰度，在嘴部搜索框内按 `145 → 120 → 100` 三档暗部阈值找最大暗区（写实风格的胡子阴影会把第一档撑满），取凸包、填洞、膨胀一像素得到嘴腔轮廓；轮廓内 灰度 > 155 且在上 48% 的为牙，下半部 红 > 绿×1.3 的为舌；最暗点作为口腔填充采样。闭眼贴片覆盖同侧睫毛、眼白、虹膜图层的联合外接框；返修时小幅外扩并柔化边缘。三档都失败时监督层可以让模型标一个嘴框重测。
+然后**测量**而不是套矩形（`auto_expression.py`）：张嘴图转灰度，在嘴部搜索框内按 `145 → 120 → 100` 三档暗部阈值找最大暗区（写实风格的胡子阴影会把第一档撑满），取凸包、填洞、膨胀一像素得到嘴腔轮廓；轮廓内 灰度 > 155 且在上 48% 的为牙，下半部 红 > 绿×1.3 的为舌；最暗点作为口腔填充采样。闭眼贴片覆盖同侧睫毛、眼白、虹膜图层的联合外接框；返修时小幅外扩并柔化边缘。
+
+三档都失败时按两级回退，取第一个落进搜索框的结果：① 同一组阈值，但先把整帧按「嘴周皮肤中位灰 = 175」归一化（暗光照片在此恢复，牙齿与舌头的阈值同步用归一化后的帧）；② 人脸关键点（MediaPipe Face Landmarker）的内唇 20 点环，仅在写实脸上可用，按占**规划嘴框**的 5%–150% 判定，避免把路人的脸当嘴。两级都不成时才让监督层标一个嘴框重测。
 
 Instead of pasting rectangles, the open-mouth edit is measured: the largest dark blob near the mouth at thresholds 145 → 120 → 100, its convex hull as the cavity, bright upper pixels as teeth, red lower pixels as tongue. Closed-eye patches cover the union of eyelash, eye-white and iris bounds. Repair rounds expand and feather that coverage. Pixels outside the edit mask are restored from the source face; eye and mouth edits may have different resolutions and are registered independently.
+
+When all three cut-offs fail the measurement falls back twice, keeping the first result that fits the planned box: the same cut-offs on a frame normalised so the skin around the mouth reads 175 (this is what recovers a dim photo), then the inner-lip loop from MediaPipe face landmarks, accepted only when it covers 5–150% of the planned mouth box so a bystander's face cannot move the measurement. Only if both fail does the supervisor place a box.
 
 ## 6. 整理精修素材 / Refinement package
 

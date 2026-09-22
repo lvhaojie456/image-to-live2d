@@ -11,7 +11,7 @@ from live2d_pipeline import client,image_model,load_env,new_workspace,plan,prepa
 from build_refinement_package import build as build_refinement
 from face_assets import build_face_assets
 from body_motion import build_body_motion
-from auto_expression import measure_mouth, eye_patch_rect
+from auto_expression import PHOTO_TOO_DARK_GRAY, measure_mouth, eye_patch_rect
 
 def sha(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def box(v,w,h):
@@ -166,6 +166,17 @@ def verification_failure(motion):
 
 MOTION_SCALES=(1.0,0.66,0.33)
 
+def record_mouth_brightness(recipe_path,candidate):
+ """Remember which strategy measured the mouth and how dark the face was.
+
+ The failure handler reads this to tell "no face" from "photo too dark"; the
+ value only exists once a measurement succeeded.
+ """
+ try: spec=json.loads(Path(recipe_path).read_text())['mouth']
+ except (OSError,ValueError,KeyError): return
+ for key in ('measurement','brightness','dark_threshold','normalised'):
+  if key in spec: candidate[key]=spec[key]
+
 def author_candidate(candidate,source,supervisor,stage):
  """Build a separate, reversible candidate and require the existing structural checks."""
  out=candidate['directory'];out.mkdir(parents=True,exist_ok=True)
@@ -173,8 +184,12 @@ def author_candidate(candidate,source,supervisor,stage):
  stage('refining',70)
  try:
   recipe=make_recipe(source,candidate['decomposition'],rs,eyes,mouth,out,candidate.get('eye_repair',0))
+  record_mouth_brightness(recipe,candidate)
  except ValueError as error:
   if 'search boundary' not in str(error) and 'mouth' not in str(error).lower(): raise
+  # The measurement could not isolate a cavity here; keep its evidence for the diagnosis.
+  from auto_expression import face_brightness
+  candidate['brightness']=round(face_brightness(mouth,rs['mouth']),1)
   with Image.open(mouth) as image: edit=image.convert('RGB')
   located=supervisor.locate_mouth(edit)
   if not located: raise
@@ -184,6 +199,7 @@ def author_candidate(candidate,source,supervisor,stage):
                    round(located[2]*crop_box[2]/edit.width),round(located[3]*crop_box[3]/edit.height)])
   candidate['regions']=rs
   recipe=make_recipe(source,candidate['decomposition'],rs,eyes,mouth,out,candidate.get('eye_repair',0))
+  record_mouth_brightness(recipe,candidate)
  build_face_assets(source,mouth,eyes,recipe,out/'face-assets')
  refinement=out/'cubism-ready';build_refinement(candidate['decomposition'],out/'face-assets',recipe,refinement)
  java=Path(os.environ.get('LIVE2D_JAVA_HOME',ROOT/'work/jdk-21.0.12.1+1/Contents/Home'))
@@ -215,13 +231,22 @@ def finish_visual_repair(workspace,source,decomposition,rs,eyes,mouth,supervisor
  from foreground import clip_background
  rounds=workspace/'visual-rounds';rounds.mkdir()
  initial={'directory':rounds/'round-00','decomposition':decomposition,'regions':rs,'eyes':eyes,'mouth':mouth}
- author_candidate(initial,source,supervisor,stage)
+ def keep_mouth_evidence():
+  # Written even when the build fails: the failure handler reads it to tell
+  # "no face" from "photo too dark", and both fallbacks can fail too.
+  stages['mouth_measurement']={k:initial[k] for k in ('measurement','brightness','dark_threshold','normalised') if k in initial}
+  (workspace/'mouth-measurement.json').write_text(json.dumps(stages['mouth_measurement'],ensure_ascii=False,indent=2))
+ try:
+  author_candidate(initial,source,supervisor,stage)
+ finally:
+  keep_mouth_evidence()
  def review(candidate,number):
   stage('verifying',92)
   return supervisor.review_model(evidence_images(candidate,source,candidate['regions']),number)
  def repair(best,judgment,actions,number):
   stage('repairing',93)
   candidate=dict(best,directory=rounds/f'round-{number:02d}',regions=dict(best['regions']))
+  candidate.pop('mouth_measurement',None)
   out=candidate['directory'];out.mkdir()
   (out/'expressions').mkdir()
   for kind in ('eyes','mouth'):
@@ -444,11 +469,25 @@ def run(args):
   except Exception as secondary: print('监督诊断本身失败（'+type(secondary).__name__+'），按原错误上报',flush=True)
   raise
 
+def dark_photo_failure(stage_name,error,measurement):
+ """True when the mouth could not be measured on a photo that is simply too dark.
+
+ The face and the planned boxes were fine (the measurement ran), the frame is
+ dim (cheek ring below PHOTO_TOO_DARK_GRAY) and retrying the same photo cannot
+ help, so the code must not read as "no face". Rule beats the model's guess.
+ """
+ if stage_name!='refining' or 'mouth' not in str(error).lower(): return False
+ try: brightness=float((measurement or {}).get('brightness') or 255)
+ except (TypeError,ValueError): return False
+ return brightness < PHOTO_TOO_DARK_GRAY
+
+
 def handle_failure(supervisor,stage_name,error,workspace,stages):
  """Rule-first diagnosis; the model only refines the code and the user-facing sentence."""
  metrics={}
  foreground=stages.get('foreground') or {}
  body=stages.get('body_motion') or {}
+ measurement=stages.get('mouth_measurement') or {}
  if stage_name in ('rigging','verifying'):
   found=verification_failure(workspace/'body-motion')
   if found: metrics.update(found)
@@ -460,6 +499,10 @@ def handle_failure(supervisor,stage_name,error,workspace,stages):
  elif stage_name in ('refining','expressions'): code='expression_failed'
  else: code='provider_unavailable'
  if not any(v>0 for k,v in supervisor.budget_left().items() if k!='model_calls'): code='budget_exhausted'
+ dark_mouth=dark_photo_failure(stage_name,error,measurement)
+ if dark_mouth:
+  code='photo_too_dark'
+  metrics['mouth_brightness']=measurement.get('brightness')
  suggestion=None;summary=None;action=None
  images=[]
  for label,path in (('neutral',workspace/'cubism-ready/neutral.png'),('layers',workspace/'foreground/layers/layers_contact_sheet.jpg')):
@@ -467,8 +510,10 @@ def handle_failure(supervisor,stage_name,error,workspace,stages):
  decision=supervisor.diagnose(packet,images) if not transport else None
  if decision:
   action=decision['action']
-  if decision['confidence']>=0.6:
+  if decision['confidence']>=0.6 and not dark_mouth:
    code=decision['diagnosis_code'];summary=decision['explanation']
+  elif dark_mouth and decision['confidence']>=0.6:
+   summary=decision['explanation']
   if action=='regenerate_image': suggestion='regenerate_image'
   elif action in ('retry_stage','replan_with_hint','tune_motion','clip_background','redo_expressions'): suggestion='retry'
   elif action=='give_up': suggestion=None

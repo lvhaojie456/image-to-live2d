@@ -84,6 +84,13 @@ class AnyiWorkerTests(unittest.TestCase):
             self.assertEqual(read_diagnosis(attempt),{})
             (attempt/'supervisor/diagnosis.json').write_text(json.dumps({'diagnosisCode':'rig_unstable','suggestion':'bogus','summary':7}))
             self.assertEqual(read_diagnosis(attempt),{'diagnosisCode':'rig_unstable'})
+            # photo_too_dark must survive this adapter's own whitelist, not only the supervisor's:
+            # a code dropped here loses its suggestion and summary before the server ever sees them.
+            (attempt/'supervisor/diagnosis.json').write_text(json.dumps({'diagnosisCode':'photo_too_dark','suggestion':'new_input','summary':'照片太暗，嘴部无法测量。'}))
+            payload=read_diagnosis(attempt)
+            self.assertEqual(payload['diagnosisCode'],'photo_too_dark')
+            self.assertEqual(payload['suggestion'],'new_input')
+            self.assertIn('光线明亮' if '光线明亮' in payload['summary'] else '太暗',payload['summary'])
 
     def test_worker_requires_https_and_keeps_token_out_of_url(self):
         for url in ['http://public.example','https://user:password@example.org','https://example.org/?token=x']:

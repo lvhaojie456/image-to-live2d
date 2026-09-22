@@ -115,7 +115,7 @@ The backend must independently validate the versioned visual report and recomput
 {"diagnosisCode": "background_leak", "suggestion": "regenerate_image", "summary": "背景被并入了人物图层……"}
 ```
 
-三个字段都可选。服务端必须按白名单过滤：`diagnosisCode` ∈ `provider_unavailable | background_leak | face_not_located | expression_failed | rig_unstable | budget_exhausted`；`suggestion` ∈ `retry | regenerate_image | new_input`；`summary` ≤ 200 字。除此之外不要把任何制作端文本透给终端用户。
+三个字段都可选。服务端必须按白名单过滤：`diagnosisCode` ∈ `provider_unavailable | background_leak | face_not_located | expression_failed | rig_unstable | budget_exhausted | photo_too_darkble | budget_exhausted`；`suggestion` ∈ `retry | regenerate_image | new_input`；`summary` ≤ 200 字。除此之外不要把任何制作端文本透给终端用户。
 
 ## 状态机 / Job state machine
 

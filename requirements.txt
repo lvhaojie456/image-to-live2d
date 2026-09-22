@@ -4,3 +4,9 @@ psd-tools[composite]==1.14.2
 numpy>=2.0
 scipy>=1.12
 opencv-python-headless>=4.10,<5
+
+# The mouth-landmark helper is NOT a dependency of this environment: MediaPipe pins
+# numpy 1.x and ships its own OpenCV, which conflicts with numpy>=2.0 above. Install it
+# into a second venv with `python scripts/install_mouth_landmarks.py` (defaults to
+# `dependencies/mouth-landmarks/`); without it the mouth measurement simply keeps its
+# darkness thresholds. Override the paths with MOUTH_LANDMARKS_PYTHON / MOUTH_LANDMARKS_MODEL.

@@ -17,7 +17,7 @@ from PIL import Image
 
 MODES = ('off', 'shadow', 'act')
 DIAGNOSIS_CODES = ('provider_unavailable', 'background_leak', 'face_not_located', 'expression_failed',
-                   'rig_unstable', 'budget_exhausted')
+                   'rig_unstable', 'budget_exhausted', 'photo_too_dark')
 SUGGESTIONS = ('retry', 'regenerate_image', 'new_input')
 ACTIONS = ('retry_stage', 'replan_with_hint', 'clip_background', 'tune_motion', 'redo_expressions',
            'regenerate_image', 'give_up')
@@ -26,13 +26,15 @@ BUDGET = {'regenerate_image': 1, 'replan_with_hint': 2, 'tune_motion': 2, 'redo_
           'retry_stage': 3, 'visual_repairs': 3, 'model_calls': 24}
 DEFAULT_SUGGESTION = {'provider_unavailable': 'retry', 'background_leak': 'regenerate_image',
                       'face_not_located': 'new_input', 'expression_failed': 'retry',
-                      'rig_unstable': 'regenerate_image', 'budget_exhausted': 'new_input'}
+                      'rig_unstable': 'regenerate_image', 'budget_exhausted': 'new_input',
+                      'photo_too_dark': 'new_input'}
 MESSAGES = {'provider_unavailable': '生成服务暂时不可用，请稍后重试。',
             'background_leak': '背景被并入了人物图层，自动裁剪后仍未通过检查，建议换一张纯色或透明背景的图片。',
             'face_not_located': '没有找到清晰的正面脸部，请换一张正面、无遮挡的图片。',
             'expression_failed': '表情素材生成不合格，请重试。',
             'rig_unstable': '动作检查未通过，建议换一张四肢完整、背景干净的图片。',
-            'budget_exhausted': '自动修复次数已用完，请换一张图片或修改描述后重新提交。'}
+            'budget_exhausted': '自动修复次数已用完，请换一张图片或修改描述后重新提交。',
+            'photo_too_dark': '照片太暗，嘴部无法测量，请换一张光线明亮的正面照片。'}
 THUMBNAIL = 384
 SUMMARY_LIMIT = 200
 
