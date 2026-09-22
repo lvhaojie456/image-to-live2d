@@ -1,5 +1,33 @@
 # Changelog / 更新记录
 
+## 2026-09-22 — 暗光照片的嘴部测量 / Mouth measurement on dim photos
+
+同步安忆制作端提交 [18c8553](https://github.com/lvhaojie456/anyi-beijing/commit/18c8553)：嘴部测量从单一阈值组改为三级回退，并新增 `photo_too_dark` 诊断码。保留本仓库的通用配置与 `image_model()` 选择逻辑，未带入安忆的模型名与路径。
+
+Ports `18c8553` from the Anyi pipeline: the mouth measurement becomes a three-tier fallback and gains a `photo_too_dark` diagnosis code. The generic configuration and `image_model()` selection are kept; no Anyi-specific model name or path is carried over.
+
+### 新增 / Added
+
+- 测量第二级：同一组 145/120/100 阈值，但先把整帧按「嘴周皮肤中位灰 = 175」归一化（`face_brightness` / `normalised_gray`）。暗光照片在此恢复；牙齿与舌头的阈值同步用归一化后的帧。
+- 测量第三级（可选）：人脸关键点的内唇 20 点环，由 `scripts/mouth_landmarks.py` 在独立 venv 里跑（`scripts/install_mouth_landmarks.py` 建环境并按 SHA-256 下载 `face_landmarker.task`）。接受判据是占**规划嘴框**的 5%–150%，避免路人或插画脸把测量带偏；未安装时自动退回前两级。
+- 诊断码 `photo_too_dark`（建议 `new_input`）：嘴部测不出且嘴周皮肤中位灰 < 120 时由规则层强制，覆盖模型的 `face_not_located` 判断。测量证据写入 `mouth-measurement.json`，与兜底定位都失败时也保留。
+- 二级与三级测量、辅助器降级、安装脚本 `--check`、证据保留与 `dark_photo_failure` 判定的测试。
+
+### 修改 / Changed
+
+- 监督层白名单、默认建议与文案新增 `photo_too_dark`；三方一致性测试覆盖。
+- 文档同步：`docs/pipeline.md` 的两级回退与中英说明、`docs/supervisor.md` 的码清单、`docs/queue-protocol.md` 的服务端过滤白名单。
+
+### 兼容性 / Compatibility
+
+- 辅助器是**可选**依赖：不安装时行为与之前一致（暗区阈值），不会报错。它需要独立 venv，因为 MediaPipe 固定 numpy 1.x 与本仓库的 numpy>=2.0 冲突。
+- 新增诊断码对旧服务端是纯增量；`adapters/anyi/worker.py` 只是转发字段，未改动。
+
+### 验证 / Validation
+
+- `python -m unittest discover -s tests`：59 项通过（Python 3.11/3.12，无 GPU、无 API key、无 Cubism Core，全部外部调用为 mock）。本地用与 CI 相同的依赖集（不装 MediaPipe）跑通，以确认辅助器缺失时自动降级。本地用与 CI 相同的依赖集（不装 MediaPipe）跑通，以确认辅助器缺失时自动降级。
+- 安忆侧的线上回放：失败的暗光照片在归一化后 145 一档通过，轮廓贴住口腔；插画与提示词任务的既有路径未变。
+
 ## 2026-09-20 — 导出模型视觉修复 / Exported-model visual repairs
 
 同步安忆制作端提交 [2a794f9](https://github.com/lvhaojie456/anyi-beijing/commit/2a794f9) 的视觉修复与新版交付协议。保留独立仓库的 `adapters/anyi/` 目录、`LLM_*` / `PLANNER_*` 通用配置、旧变量别名、许可与中英文说明。

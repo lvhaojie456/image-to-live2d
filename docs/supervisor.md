@@ -88,7 +88,7 @@ Use `--supervisor-state` to persist one job's budget across attempts. The adapte
 
 ## 失败诊断 / Failure diagnosis
 
-结构检查或其它阶段失败时，规则层先判断 `provider_unavailable`、`background_leak`、`face_not_located`、`expression_failed`、`rig_unstable`、`budget_exhausted`。非传输类失败可再由监督模型细化诊断；回答必须使用白名单动作和代码，置信度至少 0.6 才覆盖规则诊断。
+结构检查或其它阶段失败时，规则层先判断 `provider_unavailable`、`background_leak`、`face_not_located`、`expression_failed`、`rig_unstable`、`budget_exhausted`、`photo_too_dark`。非传输类失败可再由监督模型细化诊断；回答必须使用白名单动作和代码，置信度至少 0.6 才覆盖规则诊断。
 
 `retry_stage`、`clip_background`、`tune_motion`、`redo_expressions` 诊断动作产生 `retry` 建议；`replan_with_hint` 在 act 模式下删除本次规划检查点，下次重试再规划。`regenerate_image` 只产生建议，由用户携带重试 hint 发起。视觉修复循环直接执行的动作以上表为准。
 

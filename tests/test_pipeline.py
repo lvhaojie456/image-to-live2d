@@ -7,12 +7,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from live2d_pipeline import unpack_result
-from scripts.auto_build import make_recipe, motion_recipe, verification_failure
+from scripts.auto_build import dark_photo_failure, make_recipe, motion_recipe, verification_failure
 
 
 def make_recipe_from_manifest(package):
@@ -169,6 +170,39 @@ class PipelineTests(unittest.TestCase):
             (job / 'spec.json').write_text(json.dumps(spec))
             subprocess.run([sys.executable, str(ROOT / 'scripts/remote_worker.py'), tmp], check=True)
             self.assertIn('17', json.loads((job / 'status.json').read_text())['error'])
+
+
+class MouthEvidenceTests(unittest.TestCase):
+    """The brightness evidence must survive a failing build, or the diagnosis cannot fire."""
+
+    def test_evidence_is_kept_when_the_measurement_and_the_locator_both_fail(self):
+        import auto_build
+        from PIL import Image as PILImage, ImageDraw as PILDraw
+
+        class NoLocator:
+            mode, model = 'act', 'stub'
+            def locate_mouth(self, crop): return None      # the supervisor cannot place the mouth either
+            def consume(self, *a, **k): return False
+            def budget_left(self): return {'retry_stage': 1, 'model_calls': 1}
+
+        measurement_error = ValueError('Mouth measurement hit the search boundary; remeasure face regions')
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary) / 'ws'; workspace.mkdir()
+            edit = workspace / 'expression_mouth.png'
+            image = PILImage.new('RGB', (200, 200), (60, 50, 45))
+            PILDraw.Draw(image).rectangle((10, 25, 190, 185), fill=(28, 22, 20))
+            image.save(edit)
+            candidate = {'directory': workspace / 'round-00', 'decomposition': workspace / 'x.psd',
+                         'regions': {'face': [0, 0, 200, 200], 'left_eye': [40, 60, 30, 20],
+                                     'right_eye': [130, 60, 30, 20], 'mouth': [60, 110, 80, 40]},
+                         'eyes': workspace / 'expression_eyes.png', 'mouth': edit}
+            with patch.object(auto_build, 'make_recipe', side_effect=measurement_error):
+                with self.assertRaisesRegex(ValueError, 'search boundary'):
+                    auto_build.author_candidate(candidate, workspace / 'src.png', NoLocator(), lambda n, v: None)
+            # The dim frame was still measured for brightness before the failure escaped.
+            self.assertIn('brightness', candidate)
+            self.assertLess(candidate['brightness'], auto_build.PHOTO_TOO_DARK_GRAY)
+            self.assertTrue(auto_build.dark_photo_failure('refining', measurement_error, candidate))
 
 
 if __name__ == '__main__':

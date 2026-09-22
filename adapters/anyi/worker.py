@@ -146,7 +146,7 @@ def collect_delivery(workspace,destination):
     return {str(p.relative_to(destination)):p for p in sorted(destination.rglob('*')) if p.is_file()}
 
 
-DIAGNOSIS_CODES={'provider_unavailable','background_leak','face_not_located','expression_failed','rig_unstable','budget_exhausted'}
+DIAGNOSIS_CODES={'provider_unavailable','background_leak','face_not_located','expression_failed','rig_unstable','budget_exhausted','photo_too_dark'}
 SUGGESTIONS={'retry','regenerate_image','new_input'}
 RETRY_HINTS={'regenerate_image'}
 

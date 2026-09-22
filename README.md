@@ -23,7 +23,7 @@ One portrait or one prompt → a first-pass Live2D model that loads in Cubism Co
 | 3 分析形象 | 视觉模型给出脸/眼/嘴矩形、图层规划、补画清单（严格 JSON） | OpenAI 兼容视觉模型 |
 | 4 拆分图层 | See-through 拆成约 27 个语义部件 + 逐部件深度图 | 远程 GPU（24 GB） |
 | 5 泄漏裁剪 | 按深度图和遮罩找出裹了背景的图层，只重建这一层 | 本机 |
-| 6 生成表情 | 两次遮罩编辑得到闭眼/张嘴，用 OpenCV **测量**嘴腔、牙、舌、眼皮 | 图像模型 + 本机 |
+| 6 生成表情 | 两次遮罩编辑得到闭眼/张嘴，用 OpenCV **测量**嘴腔、牙、舌、眼皮；暗光照片按皮肤归一化、必要时再用 MediaPipe 内唇关键点回退 | 图像模型 + 本机 |
 | 7 整理精修素材 | 重排顺序、左右拆分、袖手分离、表情配准，写出并回读校验 PSD | 本机 |
 | 8 制作动作 | psd2live 引擎做网格/变形器/物理，加手臂与裙摆变形器和程序化待机循环 | 本机 JVM |
 | 9 检查模型 | 官方 Cubism Core 求值 370 个姿态，渲染表情、极值和连续帧：三角形不翻转、脚底位移 < 0.25 px | 本机 JVM |
@@ -125,7 +125,7 @@ Nine base stages run in order, followed by exported-model visual review and boun
 | 3 Plan | a vision model returns face / eye / mouth boxes, a layer plan and repaint list as strict JSON | OpenAI-compatible vision model |
 | 4 Decompose | See-through splits the image into ~27 semantic parts plus per-part depth maps | remote GPU (24 GB) |
 | 5 Clip leaks | layers that swallowed the background are detected via depth + mask and rebuilt alone | local |
-| 6 Expressions | two masked edits give closed eyes and an open mouth; OpenCV **measures** cavity, teeth, tongue and eyelids | image model + local |
+| 6 Expressions | two masked edits give closed eyes and an open mouth; OpenCV **measures** cavity, teeth, tongue and eyelids, falling back to skin-normalised thresholds and then MediaPipe inner-lip landmarks on dim photos | image model + local |
 | 7 Refinement package | reorder, split left/right, separate sleeves from hands, register expressions, write and read back the PSD | local |
 | 8 Rig | psd2live builds meshes / deformers / physics; arm and skirt warps plus a procedural idle loop are added | local JVM |
 | 9 Verify | official Cubism Core evaluates 370 poses and renders expressions, extremes and sequences: no flipped triangles, feet drift < 0.25 px | local JVM |

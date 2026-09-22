@@ -16,6 +16,9 @@ The root MIT license covers this repository's own Python pipeline, adapters, tes
 | Live2D Cubism Core（`Live2DCubismCore.jar` + JNI 库） | Live2D 专有许可 | **不包含、不下载、不分发。** 由使用者从自己合法安装的 Cubism Editor 或 Cubism SDK 提供，通过 `CUBISM_CORE_DIR` 指向。商用或发布请自行查阅 Live2D 的许可条款。Never included; provided by the user's own legitimate installation. |
 | Live2D Cubism Editor | Live2D 专有许可 | 仅 `open-cubism` 子命令会调用本机已安装的 Editor 打开工程；不是必需依赖。Optional; only opens local projects. |
 | Python 依赖（openai、Pillow、psd-tools、numpy、scipy、opencv-python-headless） | 各自许可（Apache-2.0 / HPND / MIT / BSD） | 通过 `requirements.txt` 由使用者自行安装。Installed by the user via `requirements.txt`. |
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe)（Google） | Apache-2.0 | **可选**，只在启用嘴部关键点回退时使用：`scripts/install_mouth_landmarks.py` 把它装进 `dependencies/mouth-landmarks/` 下的独立 venv（它固定 numpy 1.x 与自带 OpenCV，与本仓库的 numpy>=2.0 / opencv-python-headless 冲突），并按锁定 SHA-256 下载 Face Landmarker 模型 `face_landmarker.task`（Apache-2.0）。不随仓库分发，未安装时嘴部测量自动退回暗区阈值。Optional; installed into its own venv by the installer script, never bundled. |
+| Face Landmarker 模型 `face_landmarker.task` | Apache-2.0（MediaPipe 模型页） | 由安装脚本从 Google 官方地址下载并校验 SHA-256 `64184e22…`，不随仓库分发。Downloaded at a pinned digest by the installer; not bundled. |
+
 | JDK 21、Gradle | GPL-2.0 with Classpath Exception / Apache-2.0 | 由使用者自行安装。Installed by the user. |
 
 生成结果的著作权归提供提示词或图片的使用者；本仓库不含任何示例角色、用户图片或生成产物。上游作者保留其原始代码的著作权。

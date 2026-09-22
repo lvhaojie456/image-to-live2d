@@ -8,7 +8,7 @@ import unittest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from supervisor import BUDGET, DIAGNOSIS_CODES, MESSAGES, Supervisor, rectangle, sanitize_text
+from supervisor import BUDGET, DEFAULT_SUGGESTION, DIAGNOSIS_CODES, MESSAGES, Supervisor, rectangle, sanitize_text
 
 
 class FakeClient:
@@ -108,6 +108,9 @@ class SupervisorTests(unittest.TestCase):
         self.assertIsNone(rectangle([1, 2, 3], 10, 10)); self.assertIsNone(rectangle([0, 0, 11, 1], 10, 10)); self.assertEqual(rectangle(['1', 2, 3, 4], 10, 10), [1, 2, 3, 4])
         self.assertEqual(sanitize_text('a\x00b\n c ', 3), 'ab')
         self.assertEqual(set(MESSAGES), set(DIAGNOSIS_CODES))
+        self.assertEqual(set(DEFAULT_SUGGESTION), set(DIAGNOSIS_CODES))
+        self.assertEqual(DEFAULT_SUGGESTION['photo_too_dark'], 'new_input')
+        self.assertIn('光线明亮', MESSAGES['photo_too_dark'])
         with self.assertRaises(ValueError):
             Supervisor(self.root, mode='loud')
 
